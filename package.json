@@ -100,6 +100,16 @@
         "command": "aiToolkit.disableAll",
         "title": "Disable All Toolkits",
         "category": "AI Toolkit"
+      },
+      {
+        "command": "aiToolkit.addToWorkspace",
+        "title": "Add to Workspace (full Copilot discovery)",
+        "category": "AI Toolkit"
+      },
+      {
+        "command": "aiToolkit.removeFromWorkspace",
+        "title": "Remove from Workspace",
+        "category": "AI Toolkit"
       }
     ],
     "menus": {
@@ -141,6 +151,14 @@
         {
           "command": "aiToolkit.removeToolkitPath",
           "when": "view == aiToolkit.toolkits && viewItem == source"
+        },
+        {
+          "command": "aiToolkit.addToWorkspace",
+          "when": "view == aiToolkit.toolkits && viewItem =~ /^toolkit-/"
+        },
+        {
+          "command": "aiToolkit.removeFromWorkspace",
+          "when": "view == aiToolkit.toolkits && viewItem =~ /^toolkit-/"
         }
       ]
     },
@@ -161,31 +179,12 @@
             "type": "boolean"
           },
           "default": {},
-          "description": "Map of toolkit IDs to enabled/disabled state."
-        },
-        "aiToolkit.targetDirectory": {
-          "type": "string",
-          "default": ".github",
-          "description": "Workspace-relative directory where enabled assets are synced to."
-        },
-        "aiToolkit.syncMethod": {
-          "type": "string",
-          "enum": [
-            "symlink",
-            "copy"
-          ],
-          "default": "symlink",
-          "description": "How to sync enabled assets into the workspace: symlink (default) or copy."
-        },
-        "aiToolkit.autoSync": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically sync assets when toolkits are enabled or disabled."
+          "description": "Map of toolkit IDs to enabled/disabled state. Stored globally so toolkits are shared across all workspaces."
         },
         "aiToolkit.configureCopilotSettings": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically enable GitHub Copilot settings (instruction files, agent files, prompt files) when toolkits are activated."
+          "description": "Automatically configure GitHub Copilot settings to discover assets from enabled toolkits (instruction files, agent files, prompt files, code generation instructions)."
         }
       }
     }

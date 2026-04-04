@@ -1,12 +1,10 @@
 import * as vscode from 'vscode';
 import { CopilotSettingsManager } from './copilotSettings';
 import { ToolkitScanner } from './scanner';
-import { ToolkitManager } from './toolkitManager';
 import { ToolkitTreeProvider } from './treeProvider';
 import { Asset, Toolkit } from './types';
 
 let scanner: ToolkitScanner;
-let manager: ToolkitManager;
 let copilotSettings: CopilotSettingsManager;
 let treeProvider: ToolkitTreeProvider;
 let allToolkits: Toolkit[] = [];
@@ -14,7 +12,6 @@ let allToolkits: Toolkit[] = [];
 export function activate(context: vscode.ExtensionContext): void {
   const outputChannel = vscode.window.createOutputChannel('AI Toolkit');
   scanner = new ToolkitScanner();
-  manager = new ToolkitManager(outputChannel);
   copilotSettings = new CopilotSettingsManager(outputChannel);
   treeProvider = new ToolkitTreeProvider();
 
@@ -23,7 +20,6 @@ export function activate(context: vscode.ExtensionContext): void {
     showCollapseAll: true,
   });
 
-  // Register commands
   context.subscriptions.push(
     treeView,
     outputChannel,
@@ -42,9 +38,10 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('aiToolkit.enableAll', () => toggleAll(true)),
     vscode.commands.registerCommand('aiToolkit.disableAll', () => toggleAll(false)),
+    vscode.commands.registerCommand('aiToolkit.addToWorkspace', (node: { toolkit?: Toolkit }) => addToWorkspace(node)),
+    vscode.commands.registerCommand('aiToolkit.removeFromWorkspace', (node: { toolkit?: Toolkit }) => removeFromWorkspace(node)),
   );
 
-  // Watch for configuration changes
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('aiToolkit.toolkitPaths')) {
@@ -53,7 +50,6 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  // Initial scan
   refreshToolkits();
 }
 
@@ -62,8 +58,7 @@ export function deactivate(): void {
 }
 
 function shouldConfigureCopilot(): boolean {
-  const config = vscode.workspace.getConfiguration('aiToolkit');
-  return config.get<boolean>('configureCopilotSettings', true);
+  return vscode.workspace.getConfiguration('aiToolkit').get<boolean>('configureCopilotSettings', true);
 }
 
 async function refreshToolkits(): Promise<void> {
@@ -84,13 +79,8 @@ async function refreshToolkits(): Promise<void> {
 
   treeProvider.setToolkits(toolkitsBySource);
 
-  // Auto-sync if enabled
-  const autoSync = config.get<boolean>('autoSync', true);
-  if (autoSync) {
-    await manager.syncAll(allToolkits);
-    if (shouldConfigureCopilot()) {
-      await copilotSettings.enableCopilotFeatures(allToolkits);
-    }
+  if (shouldConfigureCopilot()) {
+    await copilotSettings.applyToolkits(allToolkits);
   }
 }
 
@@ -138,16 +128,12 @@ async function toggleToolkit(node: { toolkit?: Toolkit }, enabled: boolean): Pro
   const config = vscode.workspace.getConfiguration('aiToolkit');
   const enabledMap = config.get<Record<string, boolean>>('enabledToolkits', {});
   enabledMap[toolkit.id] = enabled;
-  await config.update('enabledToolkits', enabledMap, vscode.ConfigurationTarget.Workspace);
+  await config.update('enabledToolkits', enabledMap, vscode.ConfigurationTarget.Global);
 
   treeProvider.refresh();
 
-  const autoSync = config.get<boolean>('autoSync', true);
-  if (autoSync) {
-    await manager.syncToolkit(toolkit);
-    if (shouldConfigureCopilot()) {
-      await copilotSettings.enableCopilotFeatures(allToolkits);
-    }
+  if (shouldConfigureCopilot()) {
+    await copilotSettings.applyToolkits(allToolkits);
   }
 }
 
@@ -160,19 +146,27 @@ async function toggleAll(enabled: boolean): Promise<void> {
     enabledMap[toolkit.id] = enabled;
   }
 
-  await config.update('enabledToolkits', enabledMap, vscode.ConfigurationTarget.Workspace);
+  await config.update('enabledToolkits', enabledMap, vscode.ConfigurationTarget.Global);
   treeProvider.refresh();
 
-  const autoSync = config.get<boolean>('autoSync', true);
-  if (autoSync) {
-    await manager.syncAll(allToolkits);
-    if (shouldConfigureCopilot()) {
-      if (enabled) {
-        await copilotSettings.enableCopilotFeatures(allToolkits);
-      } else {
-        await copilotSettings.cleanCopilotInstructions();
-      }
+  if (shouldConfigureCopilot()) {
+    if (enabled) {
+      await copilotSettings.applyToolkits(allToolkits);
+    } else {
+      await copilotSettings.removeAll();
     }
+  }
+}
+
+async function addToWorkspace(node: { toolkit?: Toolkit }): Promise<void> {
+  if (node.toolkit) {
+    await copilotSettings.addAsWorkspaceFolder(node.toolkit);
+  }
+}
+
+async function removeFromWorkspace(node: { toolkit?: Toolkit }): Promise<void> {
+  if (node.toolkit) {
+    await copilotSettings.removeWorkspaceFolder(node.toolkit);
   }
 }
 

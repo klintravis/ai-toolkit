@@ -1,19 +1,11 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { AssetType, Toolkit } from './types';
+import { Asset, AssetType, Toolkit } from './types';
 
 /**
- * Copilot feature flags that control asset discovery.
- * These VS Code settings tell GitHub Copilot to look for assets in .github/.
- */
-const COPILOT_FEATURE_FLAGS: Record<string, { setting: string; section: string }> = {
-  agents: { setting: 'enabled', section: 'chat.agent.agentFiles' },
-  instructions: { setting: 'enabled', section: 'chat.instructionFiles' },
-  prompts: { setting: 'enabled', section: 'chat.promptFiles' },
-};
-
-/**
- * Manages GitHub Copilot VS Code settings to ensure assets are discovered.
+ * Manages GitHub Copilot VS Code settings to point at external toolkit assets.
+ * Assets live in external folders and are referenced via absolute paths —
+ * no files are copied or symlinked into the workspace.
  */
 export class CopilotSettingsManager {
   private outputChannel: vscode.OutputChannel;
@@ -23,15 +15,34 @@ export class CopilotSettingsManager {
   }
 
   /**
-   * Enable the Copilot settings needed for the given toolkits' asset types.
+   * Configure Copilot to discover assets from the given enabled toolkits.
+   * Writes settings at the User (global) level so they apply across all workspaces.
    */
-  async enableCopilotFeatures(toolkits: Toolkit[]): Promise<void> {
-    const enabledToolkits = toolkits.filter(t => t.enabled);
-    if (enabledToolkits.length === 0) {
-      return;
-    }
+  async applyToolkits(toolkits: Toolkit[]): Promise<void> {
+    const enabled = toolkits.filter(t => t.enabled);
 
-    // Determine which asset types are present across all enabled toolkits
+    // Enable Copilot feature flags
+    await this.ensureFeatureFlags(enabled);
+
+    // Configure code generation instructions with absolute paths
+    await this.updateCodeGenInstructions(enabled);
+
+    // Configure custom instructions file locations
+    await this.updateInstructionFileLocations(enabled);
+  }
+
+  /**
+   * Remove all managed Copilot settings entries.
+   */
+  async removeAll(): Promise<void> {
+    await this.updateCodeGenInstructions([]);
+    await this.updateInstructionFileLocations([]);
+  }
+
+  /**
+   * Enable Copilot feature flags that control asset discovery.
+   */
+  private async ensureFeatureFlags(enabledToolkits: Toolkit[]): Promise<void> {
     const activeTypes = new Set<AssetType>();
     for (const toolkit of enabledToolkits) {
       for (const asset of toolkit.assets) {
@@ -39,100 +50,141 @@ export class CopilotSettingsManager {
       }
     }
 
-    // Enable corresponding Copilot feature flags
-    for (const [assetFolder, { setting, section }] of Object.entries(COPILOT_FEATURE_FLAGS)) {
-      const type = assetFolder as string;
-      const matchingType = Object.values(AssetType).find(t => t === type);
-      if (matchingType && activeTypes.has(matchingType)) {
-        await this.ensureCopilotSetting(section, setting, true);
-      }
-    }
+    const flags: Array<{ section: string; key: string; types: AssetType[] }> = [
+      { section: 'chat.instructionFiles', key: 'enabled', types: [AssetType.Instruction] },
+      { section: 'chat.promptFiles', key: 'enabled', types: [AssetType.Prompt] },
+      { section: 'chat.agent.agentFiles', key: 'enabled', types: [AssetType.Agent] },
+    ];
 
-    // Update code generation instructions to reference synced instruction files
-    if (activeTypes.has(AssetType.Instruction)) {
-      await this.updateCodeGenInstructions(enabledToolkits);
+    for (const flag of flags) {
+      const needed = flag.types.some(t => activeTypes.has(t));
+      if (needed) {
+        await this.setSetting(flag.section, flag.key, true);
+      }
     }
   }
 
   /**
-   * Ensure a Copilot setting is set to the desired value.
-   * Only writes if the current value differs, to avoid unnecessary config churn.
+   * Update github.copilot.chat.codeGeneration.instructions with absolute
+   * file paths pointing at external toolkit instruction files.
    */
-  private async ensureCopilotSetting(section: string, key: string, value: boolean): Promise<void> {
-    try {
-      const config = vscode.workspace.getConfiguration(section);
-      const current = config.get<boolean>(key);
-      if (current !== value) {
-        await config.update(key, value, vscode.ConfigurationTarget.Workspace);
-        this.log(`Set ${section}.${key} = ${value}`);
-      }
-    } catch (err) {
-      // Setting may not exist in this version of VS Code / Copilot
-      this.log(`Could not set ${section}.${key}: ${err}`);
-    }
-  }
-
-  /**
-   * Update github.copilot.chat.codeGeneration.instructions to reference
-   * instruction files from enabled toolkits.
-   */
-  private async updateCodeGenInstructions(toolkits: Toolkit[]): Promise<void> {
+  private async updateCodeGenInstructions(enabledToolkits: Toolkit[]): Promise<void> {
     try {
       const config = vscode.workspace.getConfiguration('github.copilot.chat');
       const existing = config.get<Array<{ text?: string; file?: string }>>('codeGeneration.instructions', []);
 
-      // Collect instruction file paths from enabled toolkits
+      // Collect absolute paths to instruction files from enabled toolkits
       const managedEntries: Array<{ file: string }> = [];
-      for (const toolkit of toolkits) {
+      for (const toolkit of enabledToolkits) {
         for (const asset of toolkit.assets) {
           if (asset.type === AssetType.Instruction && !asset.isFolder) {
-            // Reference via workspace-relative path (.github/instructions/...)
-            const wsRelative = `.github/instructions/${path.basename(asset.sourcePath)}`;
-            managedEntries.push({ file: wsRelative });
+            managedEntries.push({ file: asset.sourcePath });
           }
         }
       }
 
-      // Preserve user-defined entries (those without our marker pattern)
+      // Preserve user-defined entries: keep anything that isn't a path we manage.
+      // We tag managed paths by checking if they appear in any known toolkit path.
+      const allToolkitRoots = enabledToolkits.map(t => t.rootPath);
       const userEntries = existing.filter(entry => {
         if ('file' in entry && typeof entry.file === 'string') {
-          return !entry.file.startsWith('.github/instructions/');
+          return !this.isPathUnderAnyRoot(entry.file, allToolkitRoots);
         }
         return true;
       });
 
       const merged = [...userEntries, ...managedEntries];
-      await config.update('codeGeneration.instructions', merged, vscode.ConfigurationTarget.Workspace);
-      this.log(`Updated codeGeneration.instructions with ${managedEntries.length} instruction files`);
+      await config.update('codeGeneration.instructions', merged, vscode.ConfigurationTarget.Global);
+      this.log(`Updated codeGeneration.instructions: ${managedEntries.length} external instruction files`);
     } catch (err) {
       this.log(`Could not update codeGeneration.instructions: ${err}`);
     }
   }
 
   /**
-   * Remove managed entries from Copilot code generation instructions.
+   * Update instruction file location patterns to include external toolkit folders.
+   * This tells Copilot to also look for instruction files in the toolkit directories.
    */
-  async cleanCopilotInstructions(): Promise<void> {
+  private async updateInstructionFileLocations(enabledToolkits: Toolkit[]): Promise<void> {
     try {
-      const config = vscode.workspace.getConfiguration('github.copilot.chat');
-      const existing = config.get<Array<{ text?: string; file?: string }>>('codeGeneration.instructions', []);
-      const cleaned = existing.filter(entry => {
-        if ('file' in entry && typeof entry.file === 'string') {
-          return !entry.file.startsWith('.github/instructions/');
-        }
-        return true;
-      });
+      const config = vscode.workspace.getConfiguration('chat.instructionFiles');
+      const existing = config.get<Record<string, boolean>>('patterns', {});
 
-      if (cleaned.length !== existing.length) {
-        await config.update('codeGeneration.instructions', cleaned, vscode.ConfigurationTarget.Workspace);
-        this.log('Cleaned managed entries from codeGeneration.instructions');
+      // Remove previously managed toolkit patterns (those pointing at external toolkit paths)
+      const cleaned: Record<string, boolean> = {};
+      for (const [pattern, enabled] of Object.entries(existing)) {
+        // Keep patterns that don't look like absolute paths to toolkit folders
+        if (!pattern.startsWith('/') || !pattern.includes('/instructions/')) {
+          cleaned[pattern] = enabled;
+        }
       }
-    } catch {
-      // ignore
+
+      // Add patterns for each enabled toolkit's instruction directory
+      for (const toolkit of enabledToolkits) {
+        const instructionAssets = toolkit.assets.filter(a => a.type === AssetType.Instruction);
+        if (instructionAssets.length > 0) {
+          const instructionDir = path.dirname(instructionAssets[0].sourcePath);
+          cleaned[`${instructionDir}/**/*.instructions.md`] = true;
+        }
+      }
+
+      await config.update('patterns', cleaned, vscode.ConfigurationTarget.Global);
+    } catch (err) {
+      // This setting may not exist in all Copilot versions
+      this.log(`Could not update instructionFiles.patterns: ${err}`);
+    }
+  }
+
+  /**
+   * Add a toolkit folder as a workspace folder so Copilot can discover
+   * agents, skills, and prompts from its .github/ directory.
+   */
+  async addAsWorkspaceFolder(toolkit: Toolkit): Promise<void> {
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    const alreadyAdded = folders.some(f => f.uri.fsPath === toolkit.rootPath);
+    if (alreadyAdded) {
+      return;
+    }
+
+    vscode.workspace.updateWorkspaceFolders(
+      folders.length,
+      null,
+      { uri: vscode.Uri.file(toolkit.rootPath), name: `[AI Toolkit] ${toolkit.name}` },
+    );
+    this.log(`Added ${toolkit.name} as workspace folder for full asset discovery`);
+  }
+
+  /**
+   * Remove a toolkit's workspace folder.
+   */
+  async removeWorkspaceFolder(toolkit: Toolkit): Promise<void> {
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    const index = folders.findIndex(f => f.uri.fsPath === toolkit.rootPath);
+    if (index >= 0) {
+      vscode.workspace.updateWorkspaceFolders(index, 1);
+      this.log(`Removed ${toolkit.name} workspace folder`);
+    }
+  }
+
+  private isPathUnderAnyRoot(filePath: string, roots: string[]): boolean {
+    const normalized = path.resolve(filePath);
+    return roots.some(root => normalized.startsWith(path.resolve(root)));
+  }
+
+  private async setSetting(section: string, key: string, value: boolean): Promise<void> {
+    try {
+      const config = vscode.workspace.getConfiguration(section);
+      const current = config.get<boolean>(key);
+      if (current !== value) {
+        await config.update(key, value, vscode.ConfigurationTarget.Global);
+        this.log(`Set ${section}.${key} = ${value}`);
+      }
+    } catch (err) {
+      this.log(`Could not set ${section}.${key}: ${err}`);
     }
   }
 
   private log(msg: string): void {
-    this.outputChannel.appendLine(`[AI Toolkit / Copilot Settings] ${msg}`);
+    this.outputChannel.appendLine(`[AI Toolkit / Copilot] ${msg}`);
   }
 }
