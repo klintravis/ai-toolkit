@@ -181,6 +181,11 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically sync assets when toolkits are enabled or disabled."
+        },
+        "aiToolkit.configureCopilotSettings": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically enable GitHub Copilot settings (instruction files, agent files, prompt files) when toolkits are activated."
         }
       }
     }

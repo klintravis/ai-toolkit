@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { CopilotSettingsManager } from './copilotSettings';
 import { ToolkitScanner } from './scanner';
 import { ToolkitManager } from './toolkitManager';
 import { ToolkitTreeProvider } from './treeProvider';
@@ -6,6 +7,7 @@ import { Asset, Toolkit } from './types';
 
 let scanner: ToolkitScanner;
 let manager: ToolkitManager;
+let copilotSettings: CopilotSettingsManager;
 let treeProvider: ToolkitTreeProvider;
 let allToolkits: Toolkit[] = [];
 
@@ -13,6 +15,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const outputChannel = vscode.window.createOutputChannel('AI Toolkit');
   scanner = new ToolkitScanner();
   manager = new ToolkitManager(outputChannel);
+  copilotSettings = new CopilotSettingsManager(outputChannel);
   treeProvider = new ToolkitTreeProvider();
 
   const treeView = vscode.window.createTreeView('aiToolkit.toolkits', {
@@ -58,6 +61,11 @@ export function deactivate(): void {
   // Nothing to clean up
 }
 
+function shouldConfigureCopilot(): boolean {
+  const config = vscode.workspace.getConfiguration('aiToolkit');
+  return config.get<boolean>('configureCopilotSettings', true);
+}
+
 async function refreshToolkits(): Promise<void> {
   const config = vscode.workspace.getConfiguration('aiToolkit');
   const toolkitPaths = config.get<string[]>('toolkitPaths', []);
@@ -80,6 +88,9 @@ async function refreshToolkits(): Promise<void> {
   const autoSync = config.get<boolean>('autoSync', true);
   if (autoSync) {
     await manager.syncAll(allToolkits);
+    if (shouldConfigureCopilot()) {
+      await copilotSettings.enableCopilotFeatures(allToolkits);
+    }
   }
 }
 
@@ -134,6 +145,9 @@ async function toggleToolkit(node: { toolkit?: Toolkit }, enabled: boolean): Pro
   const autoSync = config.get<boolean>('autoSync', true);
   if (autoSync) {
     await manager.syncToolkit(toolkit);
+    if (shouldConfigureCopilot()) {
+      await copilotSettings.enableCopilotFeatures(allToolkits);
+    }
   }
 }
 
@@ -152,6 +166,13 @@ async function toggleAll(enabled: boolean): Promise<void> {
   const autoSync = config.get<boolean>('autoSync', true);
   if (autoSync) {
     await manager.syncAll(allToolkits);
+    if (shouldConfigureCopilot()) {
+      if (enabled) {
+        await copilotSettings.enableCopilotFeatures(allToolkits);
+      } else {
+        await copilotSettings.cleanCopilotInstructions();
+      }
+    }
   }
 }
 
