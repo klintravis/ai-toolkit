@@ -1,7 +1,10 @@
-import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { isPathUnderAnyRoot, toHomeRelativePath } from './pathUtils';
 import { AssetType, Toolkit } from './types';
+
+const MANAGED_TOOLKIT_ROOTS_SETTING_SECTION = 'aiToolkit';
+const MANAGED_TOOLKIT_ROOTS_SETTING_KEY = 'managedToolkitRoots';
 
 const DISCOVERY_LOCATION_SETTINGS: Array<{ assetType: AssetType; key: string; label: string }> = [
   { assetType: AssetType.Instruction, key: 'instructionsFilesLocations', label: 'instruction file locations' },
@@ -30,15 +33,32 @@ export class CopilotSettingsManager {
   async applyToolkits(toolkits: Toolkit[]): Promise<void> {
     const enabledToolkits = toolkits.filter(toolkit => toolkit.enabled);
     const knownToolkitRoots = toolkits.map(toolkit => toolkit.rootPath);
+    const persistedManagedRoots = this.getManagedToolkitRoots();
+    const cleanupRoots = this.mergeUniquePaths([...knownToolkitRoots, ...persistedManagedRoots]);
+    const unsupportedToolkitNames = new Set<string>();
 
     await this.ensureFeatureFlags(enabledToolkits);
-    await this.updateCodeGenInstructions(enabledToolkits, knownToolkitRoots);
+    await this.updateCodeGenInstructions(enabledToolkits, cleanupRoots);
 
     for (const locationSetting of DISCOVERY_LOCATION_SETTINGS) {
-      await this.updateDiscoveryLocations(locationSetting.key, locationSetting.label, locationSetting.assetType, enabledToolkits, knownToolkitRoots);
+      await this.updateDiscoveryLocations(
+        locationSetting.key,
+        locationSetting.label,
+        locationSetting.assetType,
+        enabledToolkits,
+        cleanupRoots,
+        unsupportedToolkitNames
+      );
     }
 
-    await this.cleanupLegacyInstructionPatterns(knownToolkitRoots);
+    if (unsupportedToolkitNames.size > 0) {
+      void vscode.window.showWarningMessage(
+        `AI Toolkit could not configure one or more discovery locations because paths are outside your home directory for: ${[...unsupportedToolkitNames].join(', ')}`,
+      );
+    }
+
+    await this.cleanupLegacyInstructionPatterns(cleanupRoots);
+    await this.setManagedToolkitRoots(knownToolkitRoots);
   }
 
   /**
@@ -96,7 +116,7 @@ export class CopilotSettingsManager {
       // We tag managed paths by checking if they appear in any known toolkit path.
       const userEntries = existing.filter(entry => {
         if ('file' in entry && typeof entry.file === 'string') {
-          return !this.isPathUnderAnyRoot(entry.file, knownToolkitRoots);
+          return !isPathUnderAnyRoot(entry.file, knownToolkitRoots);
         }
         return true;
       });
@@ -118,14 +138,15 @@ export class CopilotSettingsManager {
     label: string,
     assetType: AssetType,
     enabledToolkits: Toolkit[],
-    knownToolkitRoots: string[]
+    knownToolkitRoots: string[],
+    unsupportedToolkitNames: Set<string>
   ): Promise<void> {
     try {
       const config = vscode.workspace.getConfiguration('chat');
       const existing = config.get<Record<string, boolean>>(key, {});
       const cleaned: Record<string, boolean> = {};
       for (const [location, enabled] of Object.entries(existing)) {
-        if (!this.isPathUnderAnyRoot(location, knownToolkitRoots)) {
+        if (!isPathUnderAnyRoot(location, knownToolkitRoots)) {
           cleaned[location] = enabled;
         }
       }
@@ -136,6 +157,7 @@ export class CopilotSettingsManager {
         if (configuredPath) {
           cleaned[configuredPath] = true;
         } else if (location) {
+          unsupportedToolkitNames.add(toolkit.name);
           this.log(`Skipped unsupported ${label} path outside the user home: ${location}`);
         }
       }
@@ -158,7 +180,7 @@ export class CopilotSettingsManager {
       const cleaned: Record<string, boolean> = {};
 
       for (const [pattern, enabled] of Object.entries(existing)) {
-        if (!this.isPathUnderAnyRoot(pattern, knownToolkitRoots)) {
+        if (!isPathUnderAnyRoot(pattern, knownToolkitRoots)) {
           cleaned[pattern] = enabled;
         }
       }
@@ -226,39 +248,39 @@ export class CopilotSettingsManager {
   }
 
   private toConfiguredLocationPath(folderPath: string): string | undefined {
-    const resolvedPath = path.resolve(folderPath);
-    const userHome = path.resolve(os.homedir());
-    const relativeToHome = path.relative(userHome, resolvedPath);
-
-    if (relativeToHome === '') {
-      return '~';
-    }
-
-    if (!relativeToHome.startsWith('..') && !path.isAbsolute(relativeToHome)) {
-      return `~/${relativeToHome.replace(/\\/g, '/')}`;
-    }
-
-    return undefined;
+    return toHomeRelativePath(folderPath);
   }
 
-  private normalizeComparisonPath(filePath: string): string {
-    const expanded = filePath.startsWith('~/')
-      ? path.join(os.homedir(), filePath.slice(2))
-      : filePath;
-
-    return path.resolve(expanded).replace(/\\/g, '/');
+  private getManagedToolkitRoots(): string[] {
+    const config = vscode.workspace.getConfiguration(MANAGED_TOOLKIT_ROOTS_SETTING_SECTION);
+    const roots = config.get<string[]>(MANAGED_TOOLKIT_ROOTS_SETTING_KEY, []);
+    return Array.isArray(roots) ? roots.filter(root => typeof root === 'string') : [];
   }
 
-  private isPathUnderAnyRoot(filePath: string, roots: string[]): boolean {
-    if (roots.length === 0) {
-      return false;
+  private async setManagedToolkitRoots(roots: string[]): Promise<void> {
+    try {
+      const config = vscode.workspace.getConfiguration(MANAGED_TOOLKIT_ROOTS_SETTING_SECTION);
+      const nextRoots = this.mergeUniquePaths(roots);
+      await config.update(MANAGED_TOOLKIT_ROOTS_SETTING_KEY, nextRoots, vscode.ConfigurationTarget.Global);
+      this.log(`Updated ${MANAGED_TOOLKIT_ROOTS_SETTING_SECTION}.${MANAGED_TOOLKIT_ROOTS_SETTING_KEY}: ${nextRoots.length} roots`);
+    } catch (err) {
+      this.log(`Could not update ${MANAGED_TOOLKIT_ROOTS_SETTING_SECTION}.${MANAGED_TOOLKIT_ROOTS_SETTING_KEY}: ${err}`);
+    }
+  }
+
+  private mergeUniquePaths(paths: string[]): string[] {
+    const deduped = new Map<string, string>();
+    for (const candidatePath of paths) {
+      const resolvedPath = path.resolve(candidatePath);
+      const key = process.platform === 'win32'
+        ? resolvedPath.toLowerCase()
+        : resolvedPath;
+      if (!deduped.has(key)) {
+        deduped.set(key, resolvedPath);
+      }
     }
 
-    const normalized = this.normalizeComparisonPath(filePath).toLowerCase();
-    return roots.some(root => {
-      const normalizedRoot = this.normalizeComparisonPath(root).toLowerCase();
-      return normalized === normalizedRoot || normalized.startsWith(`${normalizedRoot}/`);
-    });
+    return [...deduped.values()];
   }
 
   private async setSetting(section: string, key: string, value: boolean): Promise<void> {

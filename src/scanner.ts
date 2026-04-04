@@ -13,11 +13,11 @@ export class ToolkitScanner {
    */
   async scanPath(rootPath: string, enabledToolkits: Record<string, boolean>): Promise<Toolkit[]> {
     const resolved = path.resolve(rootPath);
-    if (!fs.existsSync(resolved)) {
+    if (!(await this.pathExists(resolved))) {
       return [];
     }
 
-    const format = this.detectFormat(resolved);
+    const format = await this.detectFormat(resolved);
     if (format !== null) {
       // This path itself is a toolkit
       const toolkit = await this.scanToolkit(resolved, format, enabledToolkits);
@@ -26,13 +26,13 @@ export class ToolkitScanner {
 
     // Check if subdirectories are toolkits
     const toolkits: Toolkit[] = [];
-    const entries = this.readDirSafe(resolved);
+    const entries = await this.readDirSafe(resolved);
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith('.')) {
         continue;
       }
       const subPath = path.join(resolved, entry.name);
-      const subFormat = this.detectFormat(subPath);
+      const subFormat = await this.detectFormat(subPath);
       if (subFormat !== null) {
         const toolkit = await this.scanToolkit(subPath, subFormat, enabledToolkits);
         if (toolkit) {
@@ -47,27 +47,30 @@ export class ToolkitScanner {
   /**
    * Detect the format of a potential toolkit directory.
    */
-  detectFormat(dirPath: string): SourceFormat | null {
+  private async detectFormat(dirPath: string): Promise<SourceFormat | null> {
     // Check for CopilotCustomizer format (.github/ with asset subfolders)
     const githubDir = path.join(dirPath, '.github');
-    if (fs.existsSync(githubDir) && this.hasAssetFolders(githubDir)) {
+    if ((await this.pathExists(githubDir)) && (await this.hasAssetFolders(githubDir))) {
       return SourceFormat.CopilotCustomizer;
     }
 
     // Check for awesome-copilot format (top-level asset folders)
-    if (this.hasAssetFolders(dirPath)) {
+    if (await this.hasAssetFolders(dirPath)) {
       return SourceFormat.AwesomeCopilot;
     }
 
     return null;
   }
 
-  private hasAssetFolders(dirPath: string): boolean {
+  private async hasAssetFolders(dirPath: string): Promise<boolean> {
     const assetFolders = ['agents', 'instructions', 'skills', 'prompts', 'plugins', 'hooks', 'workflows', 'standards'];
-    return assetFolders.some(folder => {
+    for (const folder of assetFolders) {
       const fullPath = path.join(dirPath, folder);
-      return fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory();
-    });
+      if (await this.isDirectory(fullPath)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private async scanToolkit(
@@ -111,25 +114,25 @@ export class ToolkitScanner {
 
     for (const { type, folder } of assetTypes) {
       const folderPath = path.join(assetsRoot, folder);
-      if (!fs.existsSync(folderPath)) {
+      if (!(await this.pathExists(folderPath))) {
         continue;
       }
 
-      const discovered = this.scanAssetFolder(folderPath, type, toolkitId, folder);
+      const discovered = await this.scanAssetFolder(folderPath, type, toolkitId, folder);
       assets.push(...discovered);
     }
 
     return assets;
   }
 
-  private scanAssetFolder(
+  private async scanAssetFolder(
     folderPath: string,
     type: AssetType,
     toolkitId: string,
     relativeBase: string
-  ): Asset[] {
+  ): Promise<Asset[]> {
     const assets: Asset[] = [];
-    const entries = this.readDirSafe(folderPath);
+    const entries = await this.readDirSafe(folderPath);
 
     for (const entry of entries) {
       const fullPath = path.join(folderPath, entry.name);
@@ -149,7 +152,7 @@ export class ToolkitScanner {
           });
         } else {
           // Recurse into subdirectories for file-based assets (e.g., standards with category folders)
-          const subAssets = this.scanAssetFolder(fullPath, type, toolkitId, `${relativeBase}/${entry.name}`);
+          const subAssets = await this.scanAssetFolder(fullPath, type, toolkitId, `${relativeBase}/${entry.name}`);
           assets.push(...subAssets);
         }
       } else if (entry.isFile() && this.matchesAssetType(entry.name, type)) {
@@ -212,9 +215,27 @@ export class ToolkitScanner {
     return tail;
   }
 
-  private readDirSafe(dirPath: string): fs.Dirent[] {
+  private async pathExists(targetPath: string): Promise<boolean> {
     try {
-      return fs.readdirSync(dirPath, { withFileTypes: true });
+      await fs.promises.access(targetPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async isDirectory(dirPath: string): Promise<boolean> {
+    try {
+      const stat = await fs.promises.stat(dirPath);
+      return stat.isDirectory();
+    } catch {
+      return false;
+    }
+  }
+
+  private async readDirSafe(dirPath: string): Promise<fs.Dirent[]> {
+    try {
+      return await fs.promises.readdir(dirPath, { withFileTypes: true });
     } catch {
       return [];
     }

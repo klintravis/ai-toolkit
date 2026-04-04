@@ -29,20 +29,11 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "ai-toolkit",
-          "title": "AI Toolkit",
-          "icon": "resources/icon.svg"
-        }
-      ]
-    },
     "views": {
-      "ai-toolkit": [
+      "explorer": [
         {
           "id": "aiToolkit.toolkits",
-          "name": "Toolkits"
+          "name": "AI Toolkits"
         }
       ]
     },
@@ -185,6 +176,14 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically configure GitHub Copilot settings to discover assets from enabled toolkits (instruction files, agent files, prompt files, code generation instructions)."
+        },
+        "aiToolkit.managedToolkitRoots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Internal setting used by AI Toolkit to track toolkit roots managed in Copilot settings."
         }
       }
     }
@@ -193,6 +192,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node --test test/*.test.js",
     "lint": "eslint src --ext ts",
     "package": "vsce package"
   },

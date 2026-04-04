@@ -1,7 +1,7 @@
 ---
 description: Coordinates multi-file AI Toolkit feature work across scanner, tree provider, settings, and tests with quality gates.
 model: Claude Sonnet 4.5 (copilot)
-tools: [search, search/codebase, agent]
+tools: [vscode, execute, read, agent, edit, search, web, browser, todo]
 agents: [AssetDiscovery, SidebarTree, QualityGuard]
 handoffs:
   - label: Plan scanner and discovery changes

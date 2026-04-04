@@ -55,7 +55,7 @@ Then add `~/toolkits/awesome-copilot` in the AI Toolkit sidebar. Its 187 agents,
 
 The extension updates your **VS Code User settings** (global, not per-workspace):
 
-1. **Feature flags** — enables `chat.instructionFiles.enabled`, `chat.agent.agentFiles.enabled`, `chat.promptFiles.enabled`
+1. **Feature flags** — enables `github.copilot.chat.codeGeneration.useInstructionFiles`, `chat.useAgentSkills`, `chat.useHooks`
 2. **Code generation instructions** — adds entries to `github.copilot.chat.codeGeneration.instructions` with absolute file paths pointing at the toolkit's instruction files
 3. **Discovery locations** — adds the toolkit's `instructions/`, `agents/`, `prompts/`, `skills/`, and `hooks/` folders to the corresponding `chat.*Locations` settings using `~/...` paths when supported so Copilot can discover them directly from the external toolkit path
 
