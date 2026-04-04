@@ -6,9 +6,11 @@ __pycache__/
 venv/
 
 # Build
+out/
 dist/
 build/
 *.egg-info/
+*.vsix
 
 # IDE
 .idea/

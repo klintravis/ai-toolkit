@@ -1,0 +1,204 @@
+{
+  "name": "ai-toolkit",
+  "displayName": "AI Toolkit",
+  "description": "Manage AI toolkits from external folders — browse, enable, and disable Copilot agents, instructions, skills, prompts, and plugins across workspaces.",
+  "version": "0.1.0",
+  "publisher": "klintravis",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/klintravis/ai-toolkit"
+  },
+  "engines": {
+    "vscode": "^1.106.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "copilot",
+    "ai",
+    "toolkit",
+    "agents",
+    "skills",
+    "instructions"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ai-toolkit",
+          "title": "AI Toolkit",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "ai-toolkit": [
+        {
+          "id": "aiToolkit.toolkits",
+          "name": "Toolkits"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "aiToolkit.refresh",
+        "title": "Refresh Toolkits",
+        "category": "AI Toolkit",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "aiToolkit.addToolkitPath",
+        "title": "Add Toolkit Folder",
+        "category": "AI Toolkit",
+        "icon": "$(add)"
+      },
+      {
+        "command": "aiToolkit.removeToolkitPath",
+        "title": "Remove Toolkit Folder",
+        "category": "AI Toolkit"
+      },
+      {
+        "command": "aiToolkit.enableToolkit",
+        "title": "Enable Toolkit",
+        "category": "AI Toolkit",
+        "icon": "$(check)"
+      },
+      {
+        "command": "aiToolkit.disableToolkit",
+        "title": "Disable Toolkit",
+        "category": "AI Toolkit",
+        "icon": "$(close)"
+      },
+      {
+        "command": "aiToolkit.enableAsset",
+        "title": "Enable Asset",
+        "category": "AI Toolkit"
+      },
+      {
+        "command": "aiToolkit.disableAsset",
+        "title": "Disable Asset",
+        "category": "AI Toolkit"
+      },
+      {
+        "command": "aiToolkit.openAsset",
+        "title": "Open Asset",
+        "category": "AI Toolkit"
+      },
+      {
+        "command": "aiToolkit.enableAll",
+        "title": "Enable All Toolkits",
+        "category": "AI Toolkit"
+      },
+      {
+        "command": "aiToolkit.disableAll",
+        "title": "Disable All Toolkits",
+        "category": "AI Toolkit"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "aiToolkit.refresh",
+          "when": "view == aiToolkit.toolkits",
+          "group": "navigation"
+        },
+        {
+          "command": "aiToolkit.addToolkitPath",
+          "when": "view == aiToolkit.toolkits",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "aiToolkit.enableToolkit",
+          "when": "view == aiToolkit.toolkits && viewItem == toolkit-disabled",
+          "group": "inline"
+        },
+        {
+          "command": "aiToolkit.disableToolkit",
+          "when": "view == aiToolkit.toolkits && viewItem == toolkit-enabled",
+          "group": "inline"
+        },
+        {
+          "command": "aiToolkit.enableAsset",
+          "when": "view == aiToolkit.toolkits && viewItem == asset-disabled"
+        },
+        {
+          "command": "aiToolkit.disableAsset",
+          "when": "view == aiToolkit.toolkits && viewItem == asset-enabled"
+        },
+        {
+          "command": "aiToolkit.openAsset",
+          "when": "view == aiToolkit.toolkits && viewItem =~ /^asset-/"
+        },
+        {
+          "command": "aiToolkit.removeToolkitPath",
+          "when": "view == aiToolkit.toolkits && viewItem == source"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "AI Toolkit",
+      "properties": {
+        "aiToolkit.toolkitPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Folders to scan for AI toolkits (e.g., cloned awesome-copilot repos, CopilotCustomizer output folders)."
+        },
+        "aiToolkit.enabledToolkits": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "default": {},
+          "description": "Map of toolkit IDs to enabled/disabled state."
+        },
+        "aiToolkit.targetDirectory": {
+          "type": "string",
+          "default": ".github",
+          "description": "Workspace-relative directory where enabled assets are synced to."
+        },
+        "aiToolkit.syncMethod": {
+          "type": "string",
+          "enum": [
+            "symlink",
+            "copy"
+          ],
+          "default": "symlink",
+          "description": "How to sync enabled assets into the workspace: symlink (default) or copy."
+        },
+        "aiToolkit.autoSync": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically sync assets when toolkits are enabled or disabled."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.106.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}
