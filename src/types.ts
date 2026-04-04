@@ -60,31 +60,3 @@ export interface Toolkit {
   /** Whether this toolkit is currently enabled */
   enabled: boolean;
 }
-
-/**
- * Known file patterns for each asset type.
- */
-export const ASSET_PATTERNS: Record<AssetType, { extensions: string[]; folderBased: boolean }> = {
-  [AssetType.Agent]: { extensions: ['.agent.md'], folderBased: false },
-  [AssetType.Instruction]: { extensions: ['.instructions.md'], folderBased: false },
-  [AssetType.Skill]: { extensions: ['SKILL.md'], folderBased: true },
-  [AssetType.Prompt]: { extensions: ['.prompt.md'], folderBased: false },
-  [AssetType.Plugin]: { extensions: ['plugin.md', 'plugin.json', 'plugin.yaml'], folderBased: true },
-  [AssetType.Hook]: { extensions: ['.json', '.md'], folderBased: true },
-  [AssetType.Workflow]: { extensions: ['.md'], folderBased: false },
-  [AssetType.Standard]: { extensions: ['.md'], folderBased: true },
-};
-
-/**
- * Where each asset type should be placed in the workspace target directory.
- */
-export const TARGET_SUBDIRS: Record<AssetType, string> = {
-  [AssetType.Agent]: 'agents',
-  [AssetType.Instruction]: 'instructions',
-  [AssetType.Skill]: 'skills',
-  [AssetType.Prompt]: 'prompts',
-  [AssetType.Plugin]: 'plugins',
-  [AssetType.Hook]: 'hooks',
-  [AssetType.Workflow]: 'workflows',
-  [AssetType.Standard]: 'standards',
-};

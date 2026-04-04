@@ -1,20 +1,12 @@
 # Dependencies
 node_modules/
-__pycache__/
-*.pyc
-.venv/
-venv/
 
 # Build
 out/
-dist/
-build/
-*.egg-info/
 *.vsix
 
 # IDE
 .idea/
-.vscode/
 *.swp
 *.swo
 *~

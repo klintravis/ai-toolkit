@@ -28,8 +28,6 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('aiToolkit.removeToolkitPath', (node: { folderPath?: string }) => removeToolkitPath(node)),
     vscode.commands.registerCommand('aiToolkit.enableToolkit', (node: { toolkit?: Toolkit }) => toggleToolkit(node, true)),
     vscode.commands.registerCommand('aiToolkit.disableToolkit', (node: { toolkit?: Toolkit }) => toggleToolkit(node, false)),
-    vscode.commands.registerCommand('aiToolkit.enableAsset', (node: { asset?: Asset }) => openAsset(node)),
-    vscode.commands.registerCommand('aiToolkit.disableAsset', (node: { asset?: Asset }) => openAsset(node)),
     vscode.commands.registerCommand('aiToolkit.openAsset', (assetOrNode: Asset | { asset?: Asset }) => {
       const asset = 'sourcePath' in assetOrNode ? assetOrNode : assetOrNode.asset;
       if (asset) {
@@ -163,12 +161,6 @@ async function addToWorkspace(node: { toolkit?: Toolkit }): Promise<void> {
 async function removeFromWorkspace(node: { toolkit?: Toolkit }): Promise<void> {
   if (node.toolkit) {
     await copilotSettings.removeWorkspaceFolder(node.toolkit);
-  }
-}
-
-function openAsset(node: { asset?: Asset }): void {
-  if (node.asset) {
-    openAssetFile(node.asset);
   }
 }
 

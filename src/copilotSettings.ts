@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { isPathUnderAnyRoot, toHomeRelativePath } from './pathUtils';
-import { AssetType, Toolkit } from './types';
+import { AssetType, SourceFormat, Toolkit } from './types';
 
 const MANAGED_TOOLKIT_ROOTS_SETTING_SECTION = 'aiToolkit';
 const MANAGED_TOOLKIT_ROOTS_SETTING_KEY = 'managedToolkitRoots';
@@ -234,16 +234,9 @@ export class CopilotSettingsManager {
   }
 
   private getAssetsRoot(toolkit: Toolkit): string {
-    const instructionAsset = toolkit.assets[0];
-    if (instructionAsset && instructionAsset.relativePath.startsWith('.github/')) {
+    if (toolkit.format === SourceFormat.CopilotCustomizer) {
       return path.join(toolkit.rootPath, '.github');
     }
-
-    const githubRoot = path.join(toolkit.rootPath, '.github');
-    if (toolkit.assets.some(asset => asset.sourcePath.startsWith(githubRoot))) {
-      return githubRoot;
-    }
-
     return toolkit.rootPath;
   }
 

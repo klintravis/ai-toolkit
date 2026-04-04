@@ -63,7 +63,7 @@ export class ToolkitScanner {
   }
 
   private async hasAssetFolders(dirPath: string): Promise<boolean> {
-    const assetFolders = ['agents', 'instructions', 'skills', 'prompts', 'plugins', 'hooks', 'workflows', 'standards'];
+    const assetFolders = Object.values(AssetType);
     for (const folder of assetFolders) {
       const fullPath = path.join(dirPath, folder);
       if (await this.isDirectory(fullPath)) {
@@ -101,24 +101,14 @@ export class ToolkitScanner {
 
   private async discoverAssets(assetsRoot: string, toolkitId: string): Promise<Asset[]> {
     const assets: Asset[] = [];
-    const assetTypes: Array<{ type: AssetType; folder: string }> = [
-      { type: AssetType.Agent, folder: 'agents' },
-      { type: AssetType.Instruction, folder: 'instructions' },
-      { type: AssetType.Skill, folder: 'skills' },
-      { type: AssetType.Prompt, folder: 'prompts' },
-      { type: AssetType.Plugin, folder: 'plugins' },
-      { type: AssetType.Hook, folder: 'hooks' },
-      { type: AssetType.Workflow, folder: 'workflows' },
-      { type: AssetType.Standard, folder: 'standards' },
-    ];
 
-    for (const { type, folder } of assetTypes) {
-      const folderPath = path.join(assetsRoot, folder);
+    for (const type of Object.values(AssetType)) {
+      const folderPath = path.join(assetsRoot, type);
       if (!(await this.pathExists(folderPath))) {
         continue;
       }
 
-      const discovered = await this.scanAssetFolder(folderPath, type, toolkitId, folder);
+      const discovered = await this.scanAssetFolder(folderPath, type, toolkitId, type);
       assets.push(...discovered);
     }
 
@@ -141,7 +131,7 @@ export class ToolkitScanner {
         // Folder-based assets: skills, plugins, hooks, standards
         if (this.isFolderAsset(type)) {
           const relativePath = `${relativeBase}/${entry.name}`;
-          const assetName = this.formatAssetName(entry.name, type);
+          const assetName = this.formatAssetName(entry.name);
           assets.push({
             id: `${toolkitId}::${relativePath}`,
             name: assetName,
@@ -157,7 +147,7 @@ export class ToolkitScanner {
         }
       } else if (entry.isFile() && this.matchesAssetType(entry.name, type)) {
         const relativePath = `${relativeBase}/${entry.name}`;
-        const assetName = this.formatAssetName(entry.name, type);
+        const assetName = this.formatAssetName(entry.name);
         assets.push({
           id: `${toolkitId}::${relativePath}`,
           name: assetName,
@@ -192,7 +182,7 @@ export class ToolkitScanner {
     }
   }
 
-  private formatAssetName(filename: string, type: AssetType): string {
+  private formatAssetName(filename: string): string {
     // Strip known suffixes
     let name = filename;
     const suffixes = ['.agent.md', '.instructions.md', '.prompt.md', '.md', '.json', '.yaml'];

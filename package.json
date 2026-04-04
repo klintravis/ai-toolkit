@@ -68,16 +68,6 @@
         "icon": "$(close)"
       },
       {
-        "command": "aiToolkit.enableAsset",
-        "title": "Enable Asset",
-        "category": "AI Toolkit"
-      },
-      {
-        "command": "aiToolkit.disableAsset",
-        "title": "Disable Asset",
-        "category": "AI Toolkit"
-      },
-      {
         "command": "aiToolkit.openAsset",
         "title": "Open Asset",
         "category": "AI Toolkit"
@@ -126,14 +116,6 @@
           "command": "aiToolkit.disableToolkit",
           "when": "view == aiToolkit.toolkits && viewItem == toolkit-enabled",
           "group": "inline"
-        },
-        {
-          "command": "aiToolkit.enableAsset",
-          "when": "view == aiToolkit.toolkits && viewItem == asset-disabled"
-        },
-        {
-          "command": "aiToolkit.disableAsset",
-          "when": "view == aiToolkit.toolkits && viewItem == asset-enabled"
         },
         {
           "command": "aiToolkit.openAsset",
@@ -192,8 +174,9 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node --test test/*.test.js",
+    "test": "npm run compile && node --test test/pathUtils.test.js test/scanner.test.js",
     "lint": "eslint src --ext ts",
+    "check": "npm run lint && npm test",
     "package": "vsce package"
   },
   "devDependencies": {
