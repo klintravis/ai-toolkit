@@ -1,6 +1,15 @@
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { Asset, AssetType, Toolkit } from './types';
+import { AssetType, Toolkit } from './types';
+
+const DISCOVERY_LOCATION_SETTINGS: Array<{ assetType: AssetType; key: string; label: string }> = [
+  { assetType: AssetType.Instruction, key: 'instructionsFilesLocations', label: 'instruction file locations' },
+  { assetType: AssetType.Prompt, key: 'promptFilesLocations', label: 'prompt file locations' },
+  { assetType: AssetType.Agent, key: 'agentFilesLocations', label: 'agent file locations' },
+  { assetType: AssetType.Skill, key: 'agentSkillsLocations', label: 'agent skill locations' },
+  { assetType: AssetType.Hook, key: 'hookFilesLocations', label: 'hook file locations' },
+];
 
 /**
  * Manages GitHub Copilot VS Code settings to point at external toolkit assets.
@@ -19,24 +28,24 @@ export class CopilotSettingsManager {
    * Writes settings at the User (global) level so they apply across all workspaces.
    */
   async applyToolkits(toolkits: Toolkit[]): Promise<void> {
-    const enabled = toolkits.filter(t => t.enabled);
+    const enabledToolkits = toolkits.filter(toolkit => toolkit.enabled);
+    const knownToolkitRoots = toolkits.map(toolkit => toolkit.rootPath);
 
-    // Enable Copilot feature flags
-    await this.ensureFeatureFlags(enabled);
+    await this.ensureFeatureFlags(enabledToolkits);
+    await this.updateCodeGenInstructions(enabledToolkits, knownToolkitRoots);
 
-    // Configure code generation instructions with absolute paths
-    await this.updateCodeGenInstructions(enabled);
+    for (const locationSetting of DISCOVERY_LOCATION_SETTINGS) {
+      await this.updateDiscoveryLocations(locationSetting.key, locationSetting.label, locationSetting.assetType, enabledToolkits, knownToolkitRoots);
+    }
 
-    // Configure custom instructions file locations
-    await this.updateInstructionFileLocations(enabled);
+    await this.cleanupLegacyInstructionPatterns(knownToolkitRoots);
   }
 
   /**
    * Remove all managed Copilot settings entries.
    */
   async removeAll(): Promise<void> {
-    await this.updateCodeGenInstructions([]);
-    await this.updateInstructionFileLocations([]);
+    await this.applyToolkits([]);
   }
 
   /**
@@ -51,9 +60,9 @@ export class CopilotSettingsManager {
     }
 
     const flags: Array<{ section: string; key: string; types: AssetType[] }> = [
-      { section: 'chat.instructionFiles', key: 'enabled', types: [AssetType.Instruction] },
-      { section: 'chat.promptFiles', key: 'enabled', types: [AssetType.Prompt] },
-      { section: 'chat.agent.agentFiles', key: 'enabled', types: [AssetType.Agent] },
+      { section: 'github.copilot.chat', key: 'codeGeneration.useInstructionFiles', types: [AssetType.Instruction] },
+      { section: 'chat', key: 'useAgentSkills', types: [AssetType.Skill] },
+      { section: 'chat', key: 'useHooks', types: [AssetType.Hook] },
     ];
 
     for (const flag of flags) {
@@ -68,7 +77,7 @@ export class CopilotSettingsManager {
    * Update github.copilot.chat.codeGeneration.instructions with absolute
    * file paths pointing at external toolkit instruction files.
    */
-  private async updateCodeGenInstructions(enabledToolkits: Toolkit[]): Promise<void> {
+  private async updateCodeGenInstructions(enabledToolkits: Toolkit[], knownToolkitRoots: string[]): Promise<void> {
     try {
       const config = vscode.workspace.getConfiguration('github.copilot.chat');
       const existing = config.get<Array<{ text?: string; file?: string }>>('codeGeneration.instructions', []);
@@ -85,10 +94,9 @@ export class CopilotSettingsManager {
 
       // Preserve user-defined entries: keep anything that isn't a path we manage.
       // We tag managed paths by checking if they appear in any known toolkit path.
-      const allToolkitRoots = enabledToolkits.map(t => t.rootPath);
       const userEntries = existing.filter(entry => {
         if ('file' in entry && typeof entry.file === 'string') {
-          return !this.isPathUnderAnyRoot(entry.file, allToolkitRoots);
+          return !this.isPathUnderAnyRoot(entry.file, knownToolkitRoots);
         }
         return true;
       });
@@ -102,36 +110,65 @@ export class CopilotSettingsManager {
   }
 
   /**
-   * Update instruction file location patterns to include external toolkit folders.
-   * This tells Copilot to also look for instruction files in the toolkit directories.
+   * Update Copilot discovery locations so external toolkit folders are scanned
+   * for custom agents, prompts, instructions, skills, and hooks.
    */
-  private async updateInstructionFileLocations(enabledToolkits: Toolkit[]): Promise<void> {
+  private async updateDiscoveryLocations(
+    key: string,
+    label: string,
+    assetType: AssetType,
+    enabledToolkits: Toolkit[],
+    knownToolkitRoots: string[]
+  ): Promise<void> {
+    try {
+      const config = vscode.workspace.getConfiguration('chat');
+      const existing = config.get<Record<string, boolean>>(key, {});
+      const cleaned: Record<string, boolean> = {};
+      for (const [location, enabled] of Object.entries(existing)) {
+        if (!this.isPathUnderAnyRoot(location, knownToolkitRoots)) {
+          cleaned[location] = enabled;
+        }
+      }
+
+      for (const toolkit of enabledToolkits) {
+        const location = this.getDiscoveryFolder(toolkit, assetType);
+        const configuredPath = location ? this.toConfiguredLocationPath(location) : undefined;
+        if (configuredPath) {
+          cleaned[configuredPath] = true;
+        } else if (location) {
+          this.log(`Skipped unsupported ${label} path outside the user home: ${location}`);
+        }
+      }
+
+      await config.update(key, cleaned, vscode.ConfigurationTarget.Global);
+      this.log(`Updated ${label}: ${Object.keys(cleaned).length} configured locations`);
+    } catch (err) {
+      this.log(`Could not update ${key}: ${err}`);
+    }
+  }
+
+  /**
+   * Remove legacy instruction file patterns that were written by older builds
+   * of this extension before VS Code switched to explicit location settings.
+   */
+  private async cleanupLegacyInstructionPatterns(knownToolkitRoots: string[]): Promise<void> {
     try {
       const config = vscode.workspace.getConfiguration('chat.instructionFiles');
       const existing = config.get<Record<string, boolean>>('patterns', {});
-
-      // Remove previously managed toolkit patterns (those pointing at external toolkit paths)
       const cleaned: Record<string, boolean> = {};
+
       for (const [pattern, enabled] of Object.entries(existing)) {
-        // Keep patterns that don't look like absolute paths to toolkit folders
-        if (!pattern.startsWith('/') || !pattern.includes('/instructions/')) {
+        if (!this.isPathUnderAnyRoot(pattern, knownToolkitRoots)) {
           cleaned[pattern] = enabled;
         }
       }
 
-      // Add patterns for each enabled toolkit's instruction directory
-      for (const toolkit of enabledToolkits) {
-        const instructionAssets = toolkit.assets.filter(a => a.type === AssetType.Instruction);
-        if (instructionAssets.length > 0) {
-          const instructionDir = path.dirname(instructionAssets[0].sourcePath);
-          cleaned[`${instructionDir}/**/*.instructions.md`] = true;
-        }
+      if (Object.keys(cleaned).length !== Object.keys(existing).length) {
+        await config.update('patterns', cleaned, vscode.ConfigurationTarget.Global);
+        this.log('Removed legacy instruction file patterns managed by AI Toolkit');
       }
-
-      await config.update('patterns', cleaned, vscode.ConfigurationTarget.Global);
     } catch (err) {
-      // This setting may not exist in all Copilot versions
-      this.log(`Could not update instructionFiles.patterns: ${err}`);
+      this.log(`Could not clean legacy instruction file patterns: ${err}`);
     }
   }
 
@@ -166,9 +203,62 @@ export class CopilotSettingsManager {
     }
   }
 
+  private getDiscoveryFolder(toolkit: Toolkit, assetType: AssetType): string | undefined {
+    if (!toolkit.assets.some(asset => asset.type === assetType)) {
+      return undefined;
+    }
+
+    return path.join(this.getAssetsRoot(toolkit), assetType);
+  }
+
+  private getAssetsRoot(toolkit: Toolkit): string {
+    const instructionAsset = toolkit.assets[0];
+    if (instructionAsset && instructionAsset.relativePath.startsWith('.github/')) {
+      return path.join(toolkit.rootPath, '.github');
+    }
+
+    const githubRoot = path.join(toolkit.rootPath, '.github');
+    if (toolkit.assets.some(asset => asset.sourcePath.startsWith(githubRoot))) {
+      return githubRoot;
+    }
+
+    return toolkit.rootPath;
+  }
+
+  private toConfiguredLocationPath(folderPath: string): string | undefined {
+    const resolvedPath = path.resolve(folderPath);
+    const userHome = path.resolve(os.homedir());
+    const relativeToHome = path.relative(userHome, resolvedPath);
+
+    if (relativeToHome === '') {
+      return '~';
+    }
+
+    if (!relativeToHome.startsWith('..') && !path.isAbsolute(relativeToHome)) {
+      return `~/${relativeToHome.replace(/\\/g, '/')}`;
+    }
+
+    return undefined;
+  }
+
+  private normalizeComparisonPath(filePath: string): string {
+    const expanded = filePath.startsWith('~/')
+      ? path.join(os.homedir(), filePath.slice(2))
+      : filePath;
+
+    return path.resolve(expanded).replace(/\\/g, '/');
+  }
+
   private isPathUnderAnyRoot(filePath: string, roots: string[]): boolean {
-    const normalized = path.resolve(filePath);
-    return roots.some(root => normalized.startsWith(path.resolve(root)));
+    if (roots.length === 0) {
+      return false;
+    }
+
+    const normalized = this.normalizeComparisonPath(filePath).toLowerCase();
+    return roots.some(root => {
+      const normalizedRoot = this.normalizeComparisonPath(root).toLowerCase();
+      return normalized === normalizedRoot || normalized.startsWith(`${normalizedRoot}/`);
+    });
   }
 
   private async setSetting(section: string, key: string, value: boolean): Promise<void> {

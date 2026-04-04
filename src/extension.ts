@@ -150,11 +150,7 @@ async function toggleAll(enabled: boolean): Promise<void> {
   treeProvider.refresh();
 
   if (shouldConfigureCopilot()) {
-    if (enabled) {
-      await copilotSettings.applyToolkits(allToolkits);
-    } else {
-      await copilotSettings.removeAll();
-    }
+    await copilotSettings.applyToolkits(allToolkits);
   }
 }
 

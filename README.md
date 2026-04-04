@@ -14,9 +14,9 @@ Toolkits live in **external folders** on your machine (e.g., a cloned CopilotCus
 This means:
 - **One copy** of your toolkits serves all workspaces
 - **Enable/disable** globally from the sidebar
-- **Copilot settings** are updated automatically (`codeGeneration.instructions`, `instructionFiles`, `agentFiles`, `promptFiles`)
+- **Copilot settings** are updated automatically (`github.copilot.chat.codeGeneration.instructions`, `chat.instructionsFilesLocations`, `chat.agentFilesLocations`, `chat.promptFilesLocations`, `chat.agentSkillsLocations`, `chat.hookFilesLocations`)
 
-For full Copilot discovery of agents, skills, and prompts, you can also add a toolkit as a **workspace folder** via right-click.
+When a toolkit lives under your home directory, the extension writes Copilot discovery locations as `~/...` paths so VS Code accepts them on all platforms. If a toolkit lives outside your home directory, you can still add it as a **workspace folder** via right-click so Copilot discovers its `.github/` content from the workspace.
 
 ## Getting Started
 
@@ -57,9 +57,9 @@ The extension updates your **VS Code User settings** (global, not per-workspace)
 
 1. **Feature flags** — enables `chat.instructionFiles.enabled`, `chat.agent.agentFiles.enabled`, `chat.promptFiles.enabled`
 2. **Code generation instructions** — adds entries to `github.copilot.chat.codeGeneration.instructions` with absolute file paths pointing at the toolkit's instruction files
-3. **Instruction file patterns** — adds the toolkit's instruction directory to `chat.instructionFiles.patterns`
+3. **Discovery locations** — adds the toolkit's `instructions/`, `agents/`, `prompts/`, `skills/`, and `hooks/` folders to the corresponding `chat.*Locations` settings using `~/...` paths when supported so Copilot can discover them directly from the external toolkit path
 
-For agents, skills, and prompts that Copilot discovers from `.github/` in workspace folders, you can right-click a toolkit and select **"Add to Workspace"** — this adds the toolkit folder as a workspace folder so Copilot sees its full `.github/` structure.
+For workflows, plugins, standards, or any toolkit content you also want present as an actual workspace folder, you can still right-click a toolkit and select **"Add to Workspace"**.
 
 ## Settings
 
