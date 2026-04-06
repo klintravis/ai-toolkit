@@ -72,6 +72,9 @@ export class GitToolkitManager {
     signal?: AbortSignal;
   }): Promise<{ rootPath: string; branch: string; sha: string }> {
     const name = opts.targetName ?? deriveRepoName(opts.remoteUrl);
+    if (/^\.+$/.test(name) || name.includes('/') || name.includes('\\')) {
+      throw new GitError('CLONE_FAILED', `Invalid target folder name: ${name}`);
+    }
     const rootPath = path.join(opts.targetParentDir, name);
 
     if (await pathExists(rootPath)) {

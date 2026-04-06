@@ -136,3 +136,11 @@ test('getRemoteUrl and isGitRepo work', { skip: SKIP }, async () => {
     cleanup(bareDir, workDir, cloneDir);
   }
 });
+
+test('clone rejects .. as target name', { skip: SKIP }, async () => {
+  const git = new GitToolkitManager(sink());
+  await assert.rejects(
+    () => git.clone({ remoteUrl: 'https://example.com/repo', targetParentDir: '/tmp', targetName: '..' }),
+    { message: /Invalid target folder name/ }
+  );
+});
