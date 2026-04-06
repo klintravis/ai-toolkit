@@ -97,7 +97,7 @@ export class ToolkitScanner {
     const assets: Asset[] = [];
     const seen = new Set<string>();
     for (const root of assetRoots) {
-      const discovered = await this.discoverAssets(root, id);
+      const discovered = await this.discoverAssets(root, id, rootPath);
       for (const asset of discovered) {
         if (!seen.has(asset.id)) {
           seen.add(asset.id);
@@ -120,8 +120,15 @@ export class ToolkitScanner {
     };
   }
 
-  private async discoverAssets(assetsRoot: string, toolkitId: string): Promise<Asset[]> {
+  private async discoverAssets(assetsRoot: string, toolkitId: string, toolkitRoot: string): Promise<Asset[]> {
     const assets: Asset[] = [];
+    let toolkitRealRoot: string;
+    try {
+      toolkitRealRoot = (await fs.promises.realpath(toolkitRoot)).replace(/\\/g, '/').toLowerCase();
+    } catch {
+      toolkitRealRoot = toolkitRoot.replace(/\\/g, '/').toLowerCase();
+    }
+    const visited = new Set<string>();
 
     for (const type of Object.values(AssetType)) {
       const folderPath = path.join(assetsRoot, type);
@@ -129,7 +136,7 @@ export class ToolkitScanner {
         continue;
       }
 
-      const discovered = await this.scanAssetFolder(folderPath, type, toolkitId, type, MAX_SCAN_DEPTH);
+      const discovered = await this.scanAssetFolder(folderPath, type, toolkitId, type, MAX_SCAN_DEPTH, toolkitRealRoot, visited);
       assets.push(...discovered);
     }
 
@@ -141,7 +148,9 @@ export class ToolkitScanner {
     type: AssetType,
     toolkitId: string,
     relativeBase: string,
-    depth: number
+    depth: number,
+    toolkitRealRoot: string,
+    visited: Set<string>,
   ): Promise<Asset[]> {
     if (depth <= 0) {
       return [];
@@ -156,14 +165,14 @@ export class ToolkitScanner {
       }
 
       const fullPath = path.join(folderPath, entry.name);
-      const kind = await this.classifyEntry(fullPath, entry);
+      const kind = await this.classifyEntry(fullPath, entry, toolkitRealRoot, visited);
 
       if (kind.isDirectory) {
         if (this.isFolderAsset(type)) {
           const relativePath = `${relativeBase}/${entry.name}`;
           const assetName = this.deriveDisplayName(entry.name);
           const folderAssetId = `${toolkitId}::${relativePath}`;
-          const children = await this.scanFolderContents(fullPath, type, folderAssetId, relativePath, depth - 1);
+          const children = await this.scanFolderContents(fullPath, type, folderAssetId, relativePath, depth - 1, toolkitRealRoot, visited);
           assets.push({
             id: folderAssetId,
             name: assetName,
@@ -175,7 +184,7 @@ export class ToolkitScanner {
           });
         } else {
           const subAssets = await this.scanAssetFolder(
-            fullPath, type, toolkitId, `${relativeBase}/${entry.name}`, depth - 1
+            fullPath, type, toolkitId, `${relativeBase}/${entry.name}`, depth - 1, toolkitRealRoot, visited
           );
           assets.push(...subAssets);
         }
@@ -201,7 +210,9 @@ export class ToolkitScanner {
     type: AssetType,
     parentId: string,
     parentRelativePath: string,
-    depth: number
+    depth: number,
+    toolkitRealRoot: string,
+    visited: Set<string>,
   ): Promise<Asset[]> {
     if (depth <= 0) { return []; }
     const children: Asset[] = [];
@@ -211,9 +222,9 @@ export class ToolkitScanner {
       if (entry.name.startsWith('.')) { continue; }
       const fullPath = path.join(folderPath, entry.name);
       const relativePath = `${parentRelativePath}/${entry.name}`;
-      const kind = await this.classifyEntry(fullPath, entry);
+      const kind = await this.classifyEntry(fullPath, entry, toolkitRealRoot, visited);
       if (kind.isDirectory) {
-        const nested = await this.scanFolderContents(fullPath, type, parentId, relativePath, depth - 1);
+        const nested = await this.scanFolderContents(fullPath, type, parentId, relativePath, depth - 1, toolkitRealRoot, visited);
         if (nested.length > 0) {
           children.push({
             id: `${parentId}::${entry.name}`,
@@ -288,11 +299,30 @@ export class ToolkitScanner {
    */
   private async classifyEntry(
     fullPath: string,
-    entry: fs.Dirent
+    entry: fs.Dirent,
+    toolkitRealRoot?: string,
+    visited?: Set<string>,
   ): Promise<{ isFile: boolean; isDirectory: boolean }> {
     if (entry.isSymbolicLink()) {
       try {
         const stat = await fs.promises.stat(fullPath);
+        const realPath = await fs.promises.realpath(fullPath);
+        // Containment: reject symlinks that escape the toolkit root
+        if (toolkitRealRoot) {
+          const normalizedReal = realPath.replace(/\\/g, '/').toLowerCase();
+          const normalizedRoot = toolkitRealRoot.replace(/\\/g, '/').toLowerCase();
+          if (normalizedReal !== normalizedRoot && !normalizedReal.startsWith(normalizedRoot + '/')) {
+            return { isFile: false, isDirectory: false };
+          }
+        }
+        // Cycle detection: skip already-visited directories
+        if (stat.isDirectory() && visited) {
+          const key = realPath.replace(/\\/g, '/').toLowerCase();
+          if (visited.has(key)) {
+            return { isFile: false, isDirectory: false };
+          }
+          visited.add(key);
+        }
         return { isFile: stat.isFile(), isDirectory: stat.isDirectory() };
       } catch {
         // broken symlink — treat as nothing

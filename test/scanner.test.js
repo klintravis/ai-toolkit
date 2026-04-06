@@ -406,20 +406,20 @@ test('scanPath - follows file symlinks when scanning asset folders', async () =>
   }
 });
 
-test('scanPath - follows directory junctions/symlinks for folder assets', async () => {
+test('scanPath - follows directory junctions/symlinks for folder assets inside toolkit root', async () => {
   const scanner = new ToolkitScanner();
   const tempDir = makeTempDir('test-symlink-dir');
 
   try {
-    // Real skill folder
+    // Real skill folder — inside the toolkit root so containment allows it
     const srcSkill = path.join(tempDir, 'src', 'my-skill');
     fs.mkdirSync(srcSkill, { recursive: true });
     fs.writeFileSync(path.join(srcSkill, 'SKILL.md'), '# skill');
 
-    // Picks dir with a junction/symlink to the skill folder
-    const picksSkills = path.join(tempDir, 'picks', 'skills');
-    fs.mkdirSync(picksSkills, { recursive: true });
-    const linkTarget = path.join(picksSkills, 'my-skill');
+    // Skills dir with a junction/symlink to the skill folder (same root)
+    const skillsDir = path.join(tempDir, 'skills');
+    fs.mkdirSync(skillsDir, { recursive: true });
+    const linkTarget = path.join(skillsDir, 'my-skill');
     try {
       const type = process.platform === 'win32' ? 'junction' : 'dir';
       fs.symlinkSync(srcSkill, linkTarget, type);
@@ -428,13 +428,81 @@ test('scanPath - follows directory junctions/symlinks for folder assets', async 
       fs.cpSync(srcSkill, linkTarget, { recursive: true });
     }
 
-    const result = await scanner.scanPath(path.join(tempDir, 'picks'), {});
+    // Scan the entire tempDir — both src/ and skills/ are inside the toolkit root
+    const result = await scanner.scanPath(tempDir, {});
     assert.equal(result.length, 1);
     const skills = result[0].assets.filter(a => a.type === AssetType.Skill);
-    assert.equal(skills.length, 1, 'Scanner should discover the junction-linked skill folder');
+    assert.equal(skills.length, 1, 'Scanner should discover the junction-linked skill folder within root');
     assert.equal(skills[0].isFolder, true);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('scanPath - directory junctions/symlinks escaping toolkit root are ignored', async () => {
+  const scanner = new ToolkitScanner();
+  const tempDir = makeTempDir('test-symlink-dir-escape');
+  const outsideDir = makeTempDir('test-outside-skill');
+
+  try {
+    // Real skill folder — outside the toolkit root
+    const srcSkill = path.join(outsideDir, 'my-skill');
+    fs.mkdirSync(srcSkill, { recursive: true });
+    fs.writeFileSync(path.join(srcSkill, 'SKILL.md'), '# skill');
+
+    // Picks dir with a junction/symlink to the external skill folder
+    const picksSkills = path.join(tempDir, 'skills');
+    fs.mkdirSync(picksSkills, { recursive: true });
+    const linkTarget = path.join(picksSkills, 'my-skill');
+    try {
+      const type = process.platform === 'win32' ? 'junction' : 'dir';
+      fs.symlinkSync(srcSkill, linkTarget, type);
+    } catch {
+      // Symlinks not available — skip test
+      return;
+    }
+
+    const result = await scanner.scanPath(tempDir, {});
+    // The escaped junction should be ignored, leaving zero assets → no toolkit
+    assert.equal(result.length, 0, 'Scanner should not discover assets from escaped junction');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+// --- Symlink containment ---
+
+test('scanPath - symlinks pointing outside toolkit root are ignored', async () => {
+  const scanner = new ToolkitScanner();
+  const tempDir = makeTempDir('test-symlink-escape');
+  const outsideDir = makeTempDir('test-outside-target');
+
+  try {
+    fs.mkdirSync(tempDir, { recursive: true });
+    fs.mkdirSync(outsideDir, { recursive: true });
+    fs.mkdirSync(path.join(tempDir, 'agents'), { recursive: true });
+    fs.writeFileSync(path.join(tempDir, 'agents', 'legit.agent.md'), '# Legit');
+    fs.writeFileSync(path.join(outsideDir, 'evil.agent.md'), '# Evil');
+    try {
+      fs.symlinkSync(outsideDir, path.join(tempDir, 'agents', 'escaped'), 'dir');
+    } catch {
+      // Symlinks may not be supported — skip test
+      return;
+    }
+
+    const result = await scanner.scanPath(tempDir, {});
+    assert.equal(result.length, 1);
+    const agentAssets = result[0].assets.filter(a => a.type === 'agents');
+    for (const asset of agentAssets) {
+      assert.ok(
+        !asset.sourcePath.includes('evil'),
+        `Should not discover assets from escaped symlink: ${asset.sourcePath}`
+      );
+    }
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    fs.rmSync(outsideDir, { recursive: true, force: true });
   }
 });
 
