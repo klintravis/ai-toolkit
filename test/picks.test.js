@@ -400,3 +400,13 @@ test('resync prunes picks with missing source', async () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test('sanitizeGroupName rejects . and .. as group names', () => {
+  const { sanitizeGroupName } = require('../out/picks.js');
+  const { DEFAULT_PIN_GROUP } = require('../out/types.js');
+  assert.equal(sanitizeGroupName('..'), DEFAULT_PIN_GROUP);
+  assert.equal(sanitizeGroupName('.'), DEFAULT_PIN_GROUP);
+  assert.equal(sanitizeGroupName('...'), DEFAULT_PIN_GROUP);
+  assert.equal(sanitizeGroupName('valid.name'), 'valid.name');
+  assert.equal(sanitizeGroupName('a..b'), 'a..b');
+});

@@ -459,7 +459,9 @@ export class PinManager {
 /** Validate & normalize a group name: letters, numbers, dashes, underscores. */
 export function sanitizeGroupName(name: string): string {
   const cleaned = (name ?? '').trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
-  return cleaned || DEFAULT_PIN_GROUP;
+  // Reject names that are all dots (., .., ...) — they are path traversal vectors.
+  if (!cleaned || /^\.+$/.test(cleaned)) { return DEFAULT_PIN_GROUP; }
+  return cleaned;
 }
 
 // --- helpers ---
