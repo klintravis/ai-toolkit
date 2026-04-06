@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 const fs = require('fs');
-const { GitToolkitManager, GitError, deriveRepoName, normalizeRemoteUrl, isValidRemoteUrl } = require('../out/git.js');
+const { GitToolkitManager, GitError, deriveRepoName, normalizeRemoteUrl, isValidRemoteUrl, redactCredentials } = require('../out/git.js');
 const {
   gitAvailable, makeTempDir, createBareRepoWithCommit, addCommitToBare, cloneLocal, cleanup,
 } = require('./helpers/gitFixtures.js');
@@ -135,6 +135,18 @@ test('getRemoteUrl and isGitRepo work', { skip: SKIP }, async () => {
   } finally {
     cleanup(bareDir, workDir, cloneDir);
   }
+});
+
+test('redactCredentials scrubs embedded tokens from URLs', () => {
+  assert.equal(
+    redactCredentials('Cloning into https://token:x-oauth@github.com/org/repo.git ...'),
+    'Cloning into https://***@github.com/org/repo.git ...'
+  );
+  assert.equal(
+    redactCredentials('fatal: could not read from http://user:pass@host/repo'),
+    'fatal: could not read from http://***@host/repo'
+  );
+  assert.equal(redactCredentials('safe message with no urls'), 'safe message with no urls');
 });
 
 test('clone rejects .. as target name', { skip: SKIP }, async () => {

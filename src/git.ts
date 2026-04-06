@@ -211,7 +211,7 @@ export class GitToolkitManager {
         const text = chunk.toString();
         stderr += text;
         for (const line of text.split(/\r?\n/)) {
-          if (line.length > 0) { this.output.appendLine(`[git] ${line}`); }
+          if (line.length > 0) { this.output.appendLine(`[git] ${redactCredentials(line)}`); }
         }
       });
 
@@ -272,6 +272,14 @@ export function isValidRemoteUrl(input: string): boolean {
   return false;
 }
 
+/** Scrub embedded credentials from URLs in log text. */
+export function redactCredentials(text: string): string {
+  return text.replace(/https?:\/\/[^@\s]+@/g, match => {
+    const scheme = match.startsWith('https') ? 'https' : 'http';
+    return `${scheme}://***@`;
+  });
+}
+
 /** Classify a git error from stderr into a typed GitError. */
 function classifyGitError(operation: 'clone' | 'fetch', stderr: string): GitError {
   if (/Authentication failed|could not read Username|Permission denied/i.test(stderr)) {
@@ -281,7 +289,7 @@ function classifyGitError(operation: 'clone' | 'fetch', stderr: string): GitErro
     return new GitError('NETWORK_ERROR', `Network error during ${operation}.`, stderr);
   }
   const fallbackCode: GitErrorCode = operation === 'clone' ? 'CLONE_FAILED' : 'FETCH_FAILED';
-  return new GitError(fallbackCode, `git ${operation} failed: ${stderr.trim()}`, stderr);
+  return new GitError(fallbackCode, `git ${operation} failed: ${redactCredentials(stderr.trim())}`, stderr);
 }
 
 async function removeDir(p: string): Promise<void> {
