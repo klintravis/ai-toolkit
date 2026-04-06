@@ -14,7 +14,9 @@ export class PinRecordStore {
   list(): PinRecord[] {
     if (this.cache === null) {
       const raw = this.context.globalState.get<PinRecord[]>(STORAGE_KEY);
-      this.cache = Array.isArray(raw) ? raw : [];
+      this.cache = Array.isArray(raw)
+        ? raw.filter(r => r && typeof r === 'object' && typeof r.assetId === 'string' && typeof r.targetPath === 'string')
+        : [];
     }
     return this.cache;
   }
@@ -78,7 +80,7 @@ export async function materializeAsset(
   // (unlikely since junctions don't need admin, but handled for safety).
   if (isFolder) {
     // cp recursive (Node 16.7+)
-    await fs.promises.cp(sourcePath, targetPath, { recursive: true, force: true, dereference: true });
+    await fs.promises.cp(sourcePath, targetPath, { recursive: true, force: true, dereference: false });
   } else {
     await fs.promises.copyFile(sourcePath, targetPath);
   }
@@ -430,7 +432,7 @@ export class PinManager {
             await removeIfExists(record.targetPath);
           }
           if (record.isFolder) {
-            await fs.promises.cp(record.sourcePath, record.targetPath, { recursive: true, force: true, dereference: true });
+            await fs.promises.cp(record.sourcePath, record.targetPath, { recursive: true, force: true, dereference: false });
           } else {
             await fs.promises.mkdir(path.dirname(record.targetPath), { recursive: true });
             await fs.promises.copyFile(record.sourcePath, record.targetPath);

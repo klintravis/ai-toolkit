@@ -79,6 +79,21 @@ test('remove deletes the record', async () => {
   assert.equal(list[0].rootPath, '/home/user/toolkits/b');
 });
 
+test('list filters out malformed records from globalState', () => {
+  const ctx = fakeContext();
+  ctx.globalState.update('aiToolkit.clonedToolkits', [
+    { rootPath: '/good', remoteUrl: 'https://x', branch: 'main', lastKnownSha: 'abc', clonedAt: '2026-01-01' },
+    { notARecord: true },
+    null,
+    'string',
+    { rootPath: 123 },
+  ]);
+  const store = new ClonedToolkitsStore(ctx);
+  const records = store.list();
+  assert.equal(records.length, 1);
+  assert.equal(records[0].rootPath, '/good');
+});
+
 test('path comparison normalizes slashes and case on Windows', async () => {
   const store = new ClonedToolkitsStore(fakeContext());
   await store.add(record('C:/Users/me/toolkits/Kit'));
