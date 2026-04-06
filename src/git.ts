@@ -146,7 +146,7 @@ export class GitToolkitManager {
       if (/non-fast-forward|not possible to fast-forward|diverge/i.test(res.stderr)) {
         throw new GitError('PULL_NOT_FAST_FORWARD', 'Cannot fast-forward; local branch has diverged.', res.stderr);
       }
-      throw new GitError('PULL_FAILED', `git pull failed: ${res.stderr.trim()}`, res.stderr);
+      throw new GitError('PULL_FAILED', `git pull failed: ${redactCredentials(res.stderr.trim())}`, res.stderr);
     }
     const afterSha = await this.getCurrentSha(rootPath);
     return { sha: afterSha, updated: beforeSha !== afterSha };
