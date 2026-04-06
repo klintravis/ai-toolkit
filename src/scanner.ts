@@ -307,8 +307,10 @@ export class ToolkitScanner {
       try {
         const stat = await fs.promises.stat(fullPath);
         const realPath = await fs.promises.realpath(fullPath);
-        // Containment: reject symlinks that escape the toolkit root
-        if (toolkitRealRoot) {
+        // Containment: reject directory symlinks that escape the toolkit root.
+        // File symlinks are allowed (e.g. pinned assets pointing to their source)
+        // because they reference a single file — no recursive traversal risk.
+        if (stat.isDirectory() && toolkitRealRoot) {
           const normalizedReal = realPath.replace(/\\/g, '/').toLowerCase();
           const normalizedRoot = toolkitRealRoot.replace(/\\/g, '/').toLowerCase();
           if (normalizedReal !== normalizedRoot && !normalizedReal.startsWith(normalizedRoot + '/')) {
