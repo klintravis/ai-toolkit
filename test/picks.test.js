@@ -400,3 +400,36 @@ test('resync prunes picks with missing source', async () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test('PinManager.unpin refuses to delete targets outside pins dir', async () => {
+  const dir = makeTempDir('containment');
+  const outsideFile = path.join(dir, 'outside.txt');
+  fs.writeFileSync(outsideFile, 'safe');
+  const pinsDir = path.join(dir, 'pins');
+  fs.mkdirSync(pinsDir, { recursive: true });
+
+  const ctx = fakeContext();
+  const store = new PinRecordStore(ctx);
+  await store.add(rec({
+    assetId: 'bad',
+    targetPath: outsideFile,
+  }));
+
+  const pm = new PinManager(store, sink(), () => pinsDir);
+  await pm.unpin('bad');
+  // File outside pins dir must survive — containment prevented deletion
+  assert.ok(fs.existsSync(outsideFile), 'File outside pins dir should not be deleted');
+  // But the record should still be removed from the store
+  assert.equal(store.isPinned('bad'), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('sanitizeGroupName rejects . and .. as group names', () => {
+  const { sanitizeGroupName } = require('../out/picks.js');
+  const { DEFAULT_PIN_GROUP } = require('../out/types.js');
+  assert.equal(sanitizeGroupName('..'), DEFAULT_PIN_GROUP);
+  assert.equal(sanitizeGroupName('.'), DEFAULT_PIN_GROUP);
+  assert.equal(sanitizeGroupName('...'), DEFAULT_PIN_GROUP);
+  assert.equal(sanitizeGroupName('valid.name'), 'valid.name');
+  assert.equal(sanitizeGroupName('a..b'), 'a..b');
+});

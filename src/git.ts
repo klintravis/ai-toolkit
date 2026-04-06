@@ -72,6 +72,9 @@ export class GitToolkitManager {
     signal?: AbortSignal;
   }): Promise<{ rootPath: string; branch: string; sha: string }> {
     const name = opts.targetName ?? deriveRepoName(opts.remoteUrl);
+    if (/^\.+$/.test(name) || name.includes('/') || name.includes('\\')) {
+      throw new GitError('CLONE_FAILED', `Invalid target folder name: ${name}`);
+    }
     const rootPath = path.join(opts.targetParentDir, name);
 
     if (await pathExists(rootPath)) {
@@ -143,7 +146,7 @@ export class GitToolkitManager {
       if (/non-fast-forward|not possible to fast-forward|diverge/i.test(res.stderr)) {
         throw new GitError('PULL_NOT_FAST_FORWARD', 'Cannot fast-forward; local branch has diverged.', res.stderr);
       }
-      throw new GitError('PULL_FAILED', `git pull failed: ${res.stderr.trim()}`, res.stderr);
+      throw new GitError('PULL_FAILED', `git pull failed: ${redactCredentials(res.stderr.trim())}`, res.stderr);
     }
     const afterSha = await this.getCurrentSha(rootPath);
     return { sha: afterSha, updated: beforeSha !== afterSha };
@@ -208,7 +211,7 @@ export class GitToolkitManager {
         const text = chunk.toString();
         stderr += text;
         for (const line of text.split(/\r?\n/)) {
-          if (line.length > 0) { this.output.appendLine(`[git] ${line}`); }
+          if (line.length > 0) { this.output.appendLine(`[git] ${redactCredentials(line)}`); }
         }
       });
 
@@ -269,6 +272,14 @@ export function isValidRemoteUrl(input: string): boolean {
   return false;
 }
 
+/** Scrub embedded credentials from URLs in log text. */
+export function redactCredentials(text: string): string {
+  return text.replace(/https?:\/\/[^@\s]+@/g, match => {
+    const scheme = match.startsWith('https') ? 'https' : 'http';
+    return `${scheme}://***@`;
+  });
+}
+
 /** Classify a git error from stderr into a typed GitError. */
 function classifyGitError(operation: 'clone' | 'fetch', stderr: string): GitError {
   if (/Authentication failed|could not read Username|Permission denied/i.test(stderr)) {
@@ -278,7 +289,7 @@ function classifyGitError(operation: 'clone' | 'fetch', stderr: string): GitErro
     return new GitError('NETWORK_ERROR', `Network error during ${operation}.`, stderr);
   }
   const fallbackCode: GitErrorCode = operation === 'clone' ? 'CLONE_FAILED' : 'FETCH_FAILED';
-  return new GitError(fallbackCode, `git ${operation} failed: ${stderr.trim()}`, stderr);
+  return new GitError(fallbackCode, `git ${operation} failed: ${redactCredentials(stderr.trim())}`, stderr);
 }
 
 async function removeDir(p: string): Promise<void> {

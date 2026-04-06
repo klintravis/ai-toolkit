@@ -14,7 +14,9 @@ export class ClonedToolkitsStore {
   list(): ClonedToolkitRecord[] {
     if (this.cache === null) {
       const raw = this.context.globalState.get<ClonedToolkitRecord[]>(STORAGE_KEY);
-      this.cache = Array.isArray(raw) ? raw : [];
+      this.cache = Array.isArray(raw)
+        ? raw.filter(r => r && typeof r === 'object' && typeof r.rootPath === 'string' && typeof r.remoteUrl === 'string')
+        : [];
     }
     return this.cache;
   }

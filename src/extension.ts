@@ -408,7 +408,11 @@ async function cloneToolkit(): Promise<void> {
   const folderName = await vscode.window.showInputBox({
     prompt: 'Folder name for the clone',
     value: suggestedName,
-    validateInput: v => (v && /^[\w.-]+$/.test(v) ? null : 'Use letters, numbers, dots, dashes, underscores'),
+    validateInput: v => {
+      if (!v || !/^[\w.-]+$/.test(v)) { return 'Use letters, numbers, dots, dashes, underscores'; }
+      if (/^\.+$/.test(v)) { return 'Invalid folder name'; }
+      return null;
+    },
   });
   if (!folderName) { return; }
 
@@ -832,13 +836,15 @@ async function handleDashboardMessage(msg: DashboardMessage): Promise<void> {
       return;
     }
     case 'updateToolkit': {
-      const toolkit = allToolkits.find(t => t.rootPath === msg.rootPath);
+      const toolkit = allToolkits.find(t => normalizeForComparison(t.rootPath) === normalizeForComparison(msg.rootPath));
       if (toolkit) { await updateToolkitCommand({ toolkit }); }
       return;
     }
-    case 'removeToolkit':
-      await removeToolkitPath({ folderPath: msg.rootPath });
+    case 'removeToolkit': {
+      const toolkit = allToolkits.find(t => normalizeForComparison(t.rootPath) === normalizeForComparison(msg.rootPath));
+      if (toolkit) { await removeToolkitPath({ folderPath: toolkit.rootPath }); }
       return;
+    }
     case 'unpinAsset':
       await pinManager.unpin(msg.assetId);
       await refreshToolkits();
@@ -865,9 +871,23 @@ async function handleDashboardMessage(msg: DashboardMessage): Promise<void> {
         await promptRenameGroup(msg.groupName, groups);
       } else { await renameGroupCommand(); }
       return;
-    case 'openSource':
-      openAssetFile({ sourcePath: msg.sourcePath, isFolder: msg.isFolder });
+    case 'openSource': {
+      const pinsDir = pinManager.getPinsDir();
+      const knownRoots = allToolkits.map(t => t.rootPath);
+      knownRoots.push(pinsDir);
+      const sourcePath = msg.sourcePath;
+      const isUnderKnownRoot = knownRoots.some(root => {
+        const normSource = normalizeForComparison(sourcePath);
+        const normRoot = normalizeForComparison(root);
+        return normSource === normRoot || normSource.startsWith(normRoot + '/');
+      });
+      if (isUnderKnownRoot) {
+        openAssetFile({ sourcePath, isFolder: msg.isFolder });
+      } else {
+        outputChannel.appendLine(`[security] blocked openSource for path outside known roots: ${sourcePath}`);
+      }
       return;
+    }
     case 'cloneToolkit':
       await cloneToolkit();
       return;
@@ -898,7 +918,8 @@ function schedulePeriodicCheck(): void {
     clearInterval(updateCheckInterval);
     updateCheckInterval = undefined;
   }
-  const minutes = vscode.workspace.getConfiguration('aiToolkit').get<number>('updateCheckIntervalMinutes', 0);
+  const raw = vscode.workspace.getConfiguration('aiToolkit').get<number>('updateCheckIntervalMinutes', 0);
+  const minutes = raw > 0 ? Math.max(raw, 5) : 0;
   if (minutes > 0) {
     updateCheckInterval = setInterval(() => {
       checkForUpdates(false).catch(err =>

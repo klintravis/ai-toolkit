@@ -14,7 +14,9 @@ export class PinRecordStore {
   list(): PinRecord[] {
     if (this.cache === null) {
       const raw = this.context.globalState.get<PinRecord[]>(STORAGE_KEY);
-      this.cache = Array.isArray(raw) ? raw : [];
+      this.cache = Array.isArray(raw)
+        ? raw.filter(r => r && typeof r === 'object' && typeof r.assetId === 'string' && typeof r.targetPath === 'string')
+        : [];
     }
     return this.cache;
   }
@@ -78,7 +80,7 @@ export async function materializeAsset(
   // (unlikely since junctions don't need admin, but handled for safety).
   if (isFolder) {
     // cp recursive (Node 16.7+)
-    await fs.promises.cp(sourcePath, targetPath, { recursive: true, force: true, dereference: true });
+    await fs.promises.cp(sourcePath, targetPath, { recursive: true, force: true, dereference: false });
   } else {
     await fs.promises.copyFile(sourcePath, targetPath);
   }
@@ -164,6 +166,8 @@ export class PinManager {
       targetPath = path.join(typeDir, `${slug}__${baseName}`);
     }
 
+    assertInsidePinsDir(targetPath, picksDir);
+
     const linkType = await materializeAsset(asset.sourcePath, targetPath, asset.isFolder);
 
     const record: PinRecord = {
@@ -230,7 +234,9 @@ export class PinManager {
       newTarget = path.join(typeDir, `${slugify(record.toolkitName)}__${baseName}`);
     }
 
+    assertInsidePinsDir(newTarget, picksDir);
     const linkType = await materializeAsset(record.sourcePath, newTarget, record.isFolder);
+    assertInsidePinsDir(record.targetPath, this.getPinsDir());
     await removeIfExists(record.targetPath);
 
     const updated: PinRecord = { ...record, groupName: group, targetPath: newTarget, linkType };
@@ -247,11 +253,13 @@ export class PinManager {
     const group = sanitizeGroupName(groupName);
     const pinsToRemove = this.listPinsInGroup(group);
     for (const r of pinsToRemove) {
+      assertInsidePinsDir(r.targetPath, this.getPinsDir());
       await removeIfExists(r.targetPath);
       await this.store.remove(r.assetId);
     }
     // Remove the group folder (including any empty type subfolders).
     const groupDir = path.join(this.getPinsDir(), group);
+    assertInsidePinsDir(groupDir, this.getPinsDir());
     try { await fs.promises.rm(groupDir, { recursive: true, force: true }); } catch { /* ignore */ }
     this.output.appendLine(`[pins] deleted group "${group}" (${pinsToRemove.length} picks)`);
     return pinsToRemove.length;
@@ -290,6 +298,10 @@ export class PinManager {
     const picks = this.listPinsInGroup(oldGroup);
     for (const r of picks) {
       const rel = path.relative(oldDir, r.targetPath);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+        this.output.appendLine(`[pins] skipping record with escaped path: ${r.targetPath}`);
+        continue;
+      }
       const newTarget = path.join(newDir, rel);
       await this.store.add({ ...r, groupName: newGroup, targetPath: newTarget });
     }
@@ -386,7 +398,11 @@ export class PinManager {
   async unpin(assetId: string): Promise<void> {
     const record = this.store.get(assetId);
     if (!record) { return; }
-    await removeIfExists(record.targetPath);
+    if (isInsidePinsDir(record.targetPath, this.getPinsDir())) {
+      await removeIfExists(record.targetPath);
+    } else {
+      this.output.appendLine(`[pins] skipping removal of out-of-bounds target: ${record.targetPath}`);
+    }
     await this.store.remove(assetId);
     this.output.appendLine(`[pins] unpinned ${record.assetName}`);
   }
@@ -402,7 +418,9 @@ export class PinManager {
     for (const record of this.store.list()) {
       const sourceExists = await pathExists(record.sourcePath);
       if (!sourceExists) {
-        await removeIfExists(record.targetPath);
+        if (isInsidePinsDir(record.targetPath, this.getPinsDir())) {
+          await removeIfExists(record.targetPath);
+        }
         await this.store.remove(record.assetId);
         this.output.appendLine(`[pins] pruned missing source: ${record.assetName}`);
         pruned++;
@@ -410,9 +428,11 @@ export class PinManager {
       }
       if (record.linkType === 'copy') {
         try {
-          await removeIfExists(record.targetPath);
+          if (isInsidePinsDir(record.targetPath, this.getPinsDir())) {
+            await removeIfExists(record.targetPath);
+          }
           if (record.isFolder) {
-            await fs.promises.cp(record.sourcePath, record.targetPath, { recursive: true, force: true, dereference: true });
+            await fs.promises.cp(record.sourcePath, record.targetPath, { recursive: true, force: true, dereference: false });
           } else {
             await fs.promises.mkdir(path.dirname(record.targetPath), { recursive: true });
             await fs.promises.copyFile(record.sourcePath, record.targetPath);
@@ -433,7 +453,11 @@ export class PinManager {
   async unpinAllFromToolkit(toolkitId: string): Promise<number> {
     const pinsToRemove = this.store.list().filter(r => r.toolkitId === toolkitId);
     for (const r of pinsToRemove) {
-      await removeIfExists(r.targetPath);
+      if (isInsidePinsDir(r.targetPath, this.getPinsDir())) {
+        await removeIfExists(r.targetPath);
+      } else {
+        this.output.appendLine(`[pins] skipping removal of out-of-bounds target: ${r.targetPath}`);
+      }
       await this.store.remove(r.assetId);
     }
     if (pinsToRemove.length > 0) {
@@ -459,13 +483,21 @@ export class PinManager {
 /** Validate & normalize a group name: letters, numbers, dashes, underscores. */
 export function sanitizeGroupName(name: string): string {
   const cleaned = (name ?? '').trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
-  return cleaned || DEFAULT_PIN_GROUP;
+  // Reject names that are all dots (., .., ...) — they are path traversal vectors.
+  if (!cleaned || /^\.+$/.test(cleaned)) { return DEFAULT_PIN_GROUP; }
+  return cleaned;
 }
 
 // --- helpers ---
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'toolkit';
+}
+
+function assertInsidePinsDir(targetPath: string, pinsDir: string): void {
+  if (!isInsidePinsDir(targetPath, pinsDir)) {
+    throw new Error(`Security: target path escapes pins directory: ${targetPath}`);
+  }
 }
 
 /** True when the given path is inside (or equal to) a picks directory. */
