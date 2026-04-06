@@ -24,6 +24,20 @@
         "${workspaceFolder}/out/**/*.js"
       ],
       "preLaunchTask": "Watch Extension"
+    },
+    {
+      "name": "Debug Tests",
+      "type": "node",
+      "request": "launch",
+      "runtimeArgs": ["--test"],
+      "args": [
+        "${workspaceFolder}/test/pathUtils.test.js",
+        "${workspaceFolder}/test/scanner.test.js"
+      ],
+      "outFiles": [
+        "${workspaceFolder}/out/**/*.js"
+      ],
+      "preLaunchTask": "Compile Extension"
     }
   ]
 }

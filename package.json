@@ -9,8 +9,9 @@
     "type": "git",
     "url": "https://github.com/klintravis/ai-toolkit"
   },
+  "preview": true,
   "engines": {
-    "vscode": "^1.106.0"
+    "vscode": "^1.96.0"
   },
   "categories": [
     "Other",
@@ -91,6 +92,83 @@
         "command": "aiToolkit.removeFromWorkspace",
         "title": "Remove from Workspace",
         "category": "AI Toolkit"
+      },
+      {
+        "command": "aiToolkit.cloneToolkit",
+        "title": "Clone Toolkit from GitHub…",
+        "category": "AI Toolkit",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "aiToolkit.checkForUpdates",
+        "title": "Check for Toolkit Updates",
+        "category": "AI Toolkit",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "aiToolkit.updateToolkit",
+        "title": "Update Toolkit",
+        "category": "AI Toolkit",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "aiToolkit.updateAllToolkits",
+        "title": "Update All Toolkits",
+        "category": "AI Toolkit"
+      },
+      {
+        "command": "aiToolkit.pinAsset",
+        "title": "Pin to My Picks",
+        "category": "AI Toolkit",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "aiToolkit.unpinAsset",
+        "title": "Unpin from My Picks",
+        "category": "AI Toolkit",
+        "icon": "$(pinned)"
+      },
+      {
+        "command": "aiToolkit.openPicksFolder",
+        "title": "Open My Picks Folder",
+        "category": "AI Toolkit"
+      },
+      {
+        "command": "aiToolkit.openDashboard",
+        "title": "Open Dashboard",
+        "category": "AI Toolkit",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "aiToolkit.createGroup",
+        "title": "Create Group",
+        "category": "AI Toolkit",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "aiToolkit.deleteGroup",
+        "title": "Delete Group",
+        "category": "AI Toolkit"
+      },
+      {
+        "command": "aiToolkit.renameGroup",
+        "title": "Rename Group",
+        "category": "AI Toolkit"
+      },
+      {
+        "command": "aiToolkit.moveAssetToGroup",
+        "title": "Move to Group…",
+        "category": "AI Toolkit"
+      },
+      {
+        "command": "aiToolkit.deleteGroupFromTree",
+        "title": "Delete Group",
+        "category": "AI Toolkit"
+      },
+      {
+        "command": "aiToolkit.openPickSource",
+        "title": "Open Pick Source",
+        "category": "AI Toolkit"
       }
     ],
     "menus": {
@@ -104,17 +182,32 @@
           "command": "aiToolkit.addToolkitPath",
           "when": "view == aiToolkit.toolkits",
           "group": "navigation"
+        },
+        {
+          "command": "aiToolkit.cloneToolkit",
+          "when": "view == aiToolkit.toolkits",
+          "group": "navigation"
+        },
+        {
+          "command": "aiToolkit.checkForUpdates",
+          "when": "view == aiToolkit.toolkits",
+          "group": "navigation"
+        },
+        {
+          "command": "aiToolkit.openDashboard",
+          "when": "view == aiToolkit.toolkits",
+          "group": "navigation@0"
         }
       ],
       "view/item/context": [
         {
           "command": "aiToolkit.enableToolkit",
-          "when": "view == aiToolkit.toolkits && viewItem == toolkit-disabled",
+          "when": "view == aiToolkit.toolkits && viewItem =~ /^toolkit-disabled-/",
           "group": "inline"
         },
         {
           "command": "aiToolkit.disableToolkit",
-          "when": "view == aiToolkit.toolkits && viewItem == toolkit-enabled",
+          "when": "view == aiToolkit.toolkits && viewItem =~ /^toolkit-enabled-/",
           "group": "inline"
         },
         {
@@ -123,7 +216,11 @@
         },
         {
           "command": "aiToolkit.removeToolkitPath",
-          "when": "view == aiToolkit.toolkits && viewItem == source"
+          "when": "view == aiToolkit.toolkits && viewItem =~ /^toolkit-.*-(cloned|external)/"
+        },
+        {
+          "command": "aiToolkit.deleteGroupFromTree",
+          "when": "view == aiToolkit.toolkits && viewItem =~ /^toolkit-.*-group/"
         },
         {
           "command": "aiToolkit.addToWorkspace",
@@ -132,6 +229,29 @@
         {
           "command": "aiToolkit.removeFromWorkspace",
           "when": "view == aiToolkit.toolkits && viewItem =~ /^toolkit-/"
+        },
+        {
+          "command": "aiToolkit.updateToolkit",
+          "when": "view == aiToolkit.toolkits && viewItem =~ /-updatable$/",
+          "group": "inline"
+        },
+        {
+          "command": "aiToolkit.updateToolkit",
+          "when": "view == aiToolkit.toolkits && viewItem =~ /-cloned($|-)/"
+        },
+        {
+          "command": "aiToolkit.pinAsset",
+          "when": "view == aiToolkit.toolkits && viewItem =~ /^asset-(enabled|disabled)$/",
+          "group": "inline"
+        },
+        {
+          "command": "aiToolkit.unpinAsset",
+          "when": "view == aiToolkit.toolkits && viewItem =~ /-pinned$/",
+          "group": "inline"
+        },
+        {
+          "command": "aiToolkit.moveAssetToGroup",
+          "when": "view == aiToolkit.toolkits && viewItem =~ /-pinned($|-)/"
         }
       ]
     },
@@ -159,13 +279,33 @@
           "default": true,
           "description": "Automatically configure GitHub Copilot settings to discover assets from enabled toolkits (instruction files, agent files, prompt files, code generation instructions)."
         },
+        "aiToolkit.picksDirectory": {
+          "type": "string",
+          "default": "~/.ai-toolkits/my-picks",
+          "description": "Directory where individually pinned assets are linked. Treated as a synthetic toolkit. Supports ~/ tilde paths."
+        },
+        "aiToolkit.cloneDirectory": {
+          "type": "string",
+          "default": "~/.ai-toolkits",
+          "description": "Directory where AI Toolkit clones GitHub repositories. Supports ~/ tilde paths."
+        },
+        "aiToolkit.checkForUpdatesOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "When enabled, check cloned toolkits for updates shortly after VS Code starts."
+        },
+        "aiToolkit.updateCheckIntervalMinutes": {
+          "type": "number",
+          "default": 0,
+          "description": "Periodically check for toolkit updates at this interval (minutes). 0 disables periodic checks."
+        },
         "aiToolkit.managedToolkitRoots": {
           "type": "array",
           "items": {
             "type": "string"
           },
           "default": [],
-          "description": "Internal setting used by AI Toolkit to track toolkit roots managed in Copilot settings."
+          "markdownDescription": "**Internal** — used by AI Toolkit to track which toolkit roots it manages in Copilot settings. Do not edit manually."
         }
       }
     }
@@ -174,14 +314,14 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node --test test/pathUtils.test.js test/scanner.test.js",
-    "lint": "eslint src --ext ts",
+    "test": "npm run compile && node --test test/pathUtils.test.js test/scanner.test.js test/clonedToolkitsStore.test.js test/git.test.js test/updateChecker.test.js test/picks.test.js",
+    "lint": "eslint src --ext ts && eslint test --ext js",
     "check": "npm run lint && npm test",
-    "package": "vsce package"
+    "package": "npx vsce package"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
-    "@types/vscode": "^1.106.0",
+    "@types/vscode": "^1.96.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
     "eslint": "^8.56.0",

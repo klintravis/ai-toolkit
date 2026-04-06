@@ -1,99 +1,157 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
-const os = require('os');
-const { toHomeRelativePath, isPathUnderAnyRoot } = require('../out/pathUtils.js');
+const { expandHomePath, normalizeForComparison, toHomeRelativePath, isPathUnderAnyRoot } = require('../out/pathUtils.js');
 
 /**
  * Unit tests for pathUtils module.
- * Tests path normalization and home-relative path conversions.
+ * Tests all four exported functions: expandHomePath, normalizeForComparison,
+ * toHomeRelativePath, and isPathUnderAnyRoot.
  */
 
+const FAKE_HOME = process.platform === 'win32' ? 'C:/Users/test' : '/home/test';
+
+// --- expandHomePath ---
+
+test('expandHomePath - bare tilde expands to home directory', () => {
+  const result = expandHomePath('~', FAKE_HOME);
+  assert.equal(result, FAKE_HOME);
+});
+
+test('expandHomePath - tilde slash prefix expands correctly', () => {
+  const result = expandHomePath('~/documents/file.txt', FAKE_HOME);
+  assert.equal(result, FAKE_HOME + '/documents/file.txt');
+});
+
+test('expandHomePath - tilde backslash prefix expands correctly', () => {
+  const result = expandHomePath('~\\documents\\file.txt', FAKE_HOME);
+  assert.equal(result, FAKE_HOME + '/documents/file.txt');
+});
+
+test('expandHomePath - absolute path passes through with slash normalization', () => {
+  const inputPath = process.platform === 'win32' ? 'C:/temp/file.txt' : '/tmp/file.txt';
+  const result = expandHomePath(inputPath, FAKE_HOME);
+  assert.equal(result, inputPath);
+});
+
+test('expandHomePath - normalizes backslashes to forward slashes', () => {
+  if (process.platform !== 'win32') { return; }
+  const result = expandHomePath('C:\\Users\\test\\docs', FAKE_HOME);
+  assert.equal(result, 'C:/Users/test/docs');
+});
+
+// --- normalizeForComparison ---
+
+test('normalizeForComparison - strips trailing slashes', () => {
+  const a = normalizeForComparison(FAKE_HOME + '/projects/', FAKE_HOME);
+  const b = normalizeForComparison(FAKE_HOME + '/projects', FAKE_HOME);
+  assert.equal(a, b);
+});
+
+test('normalizeForComparison - tilde and absolute forms produce same result', () => {
+  const tildeResult = normalizeForComparison('~/projects', FAKE_HOME);
+  const absResult = normalizeForComparison(FAKE_HOME + '/projects', FAKE_HOME);
+  assert.equal(tildeResult, absResult);
+});
+
+test('normalizeForComparison - case-insensitive on Windows', () => {
+  if (process.platform !== 'win32') { return; }
+  const upper = normalizeForComparison('C:/Users/Test', FAKE_HOME);
+  const lower = normalizeForComparison('C:/users/test', FAKE_HOME);
+  assert.equal(upper, lower);
+});
+
+test('normalizeForComparison - preserves root paths', () => {
+  if (process.platform === 'win32') {
+    const root = normalizeForComparison('C:/', FAKE_HOME);
+    assert.ok(root.endsWith('c:/') || root.endsWith('C:/'), 'Should preserve drive root');
+  } else {
+    const root = normalizeForComparison('/', FAKE_HOME);
+    assert.equal(root, '/');
+  }
+});
+
+// --- toHomeRelativePath ---
+
 test('toHomeRelativePath - path inside home returns ~/relative', () => {
-  const fakeHome = process.platform === 'win32' ? 'C:/Users/test' : '/home/test';
-  const inputPath = path.join(fakeHome, 'documents', 'file.txt');
-  const result = toHomeRelativePath(inputPath, fakeHome);
+  const inputPath = path.join(FAKE_HOME, 'documents', 'file.txt');
+  const result = toHomeRelativePath(inputPath, FAKE_HOME);
   assert.equal(result, '~/documents/file.txt');
 });
 
-test('toHomeRelativePath - home directory returns ~', () => {
-  const fakeHome = process.platform === 'win32' ? 'C:/Users/test' : '/home/test';
-  const result = toHomeRelativePath(fakeHome, fakeHome);
+test('toHomeRelativePath - home directory itself returns ~', () => {
+  const result = toHomeRelativePath(FAKE_HOME, FAKE_HOME);
   assert.equal(result, '~');
 });
 
 test('toHomeRelativePath - path outside home returns undefined', () => {
-  const fakeHome = process.platform === 'win32' ? 'C:/Users/test' : '/home/test';
   const outsidePath = process.platform === 'win32' ? 'C:/temp/outside' : '/tmp/outside';
-  const result = toHomeRelativePath(outsidePath, fakeHome);
+  const result = toHomeRelativePath(outsidePath, FAKE_HOME);
   assert.equal(result, undefined);
 });
 
-test('toHomeRelativePath - tilde path expands correctly', () => {
-  const fakeHome = process.platform === 'win32' ? 'C:/Users/test' : '/home/test';
-  const inputPath = '~/documents/file.txt';
-  const result = toHomeRelativePath(inputPath, fakeHome);
+test('toHomeRelativePath - tilde input is idempotent', () => {
+  const result = toHomeRelativePath('~/documents/file.txt', FAKE_HOME);
   assert.equal(result, '~/documents/file.txt');
 });
 
 test('toHomeRelativePath - nested subdirectory', () => {
-  const fakeHome = process.platform === 'win32' ? 'C:/Users/test' : '/home/test';
-  const inputPath = path.join(fakeHome, 'a', 'b', 'c', 'd.txt');
-  const result = toHomeRelativePath(inputPath, fakeHome);
+  const inputPath = path.join(FAKE_HOME, 'a', 'b', 'c', 'd.txt');
+  const result = toHomeRelativePath(inputPath, FAKE_HOME);
   assert.equal(result, '~/a/b/c/d.txt');
 });
 
+test('toHomeRelativePath - normalizes backslashes on Windows', () => {
+  if (process.platform !== 'win32') { return; }
+  const result = toHomeRelativePath('C:\\Users\\test\\docs\\file.txt', 'C:\\Users\\test');
+  assert.equal(result, '~/docs/file.txt');
+});
+
+// --- isPathUnderAnyRoot ---
+
 test('isPathUnderAnyRoot - path under one root returns true', () => {
-  const fakeHome = process.platform === 'win32' ? 'C:/Users/test' : '/home/test';
-  const root = path.join(fakeHome, 'projects');
+  const root = path.join(FAKE_HOME, 'projects');
   const inputPath = path.join(root, 'my-project', 'src');
-  const result = isPathUnderAnyRoot(inputPath, [root], fakeHome);
-  assert.equal(result, true);
+  assert.equal(isPathUnderAnyRoot(inputPath, [root], FAKE_HOME), true);
 });
 
 test('isPathUnderAnyRoot - path equal to root returns true', () => {
-  const fakeHome = process.platform === 'win32' ? 'C:/Users/test' : '/home/test';
-  const root = path.join(fakeHome, 'projects');
-  const result = isPathUnderAnyRoot(root, [root], fakeHome);
-  assert.equal(result, true);
+  const root = path.join(FAKE_HOME, 'projects');
+  assert.equal(isPathUnderAnyRoot(root, [root], FAKE_HOME), true);
 });
 
 test('isPathUnderAnyRoot - path not under any root returns false', () => {
-  const fakeHome = process.platform === 'win32' ? 'C:/Users/test' : '/home/test';
-  const root1 = path.join(fakeHome, 'projects');
-  const root2 = path.join(fakeHome, 'documents');
-  const outsidePath = path.join(fakeHome, 'downloads', 'file.txt');
-  const result = isPathUnderAnyRoot(outsidePath, [root1, root2], fakeHome);
-  assert.equal(result, false);
+  const root1 = path.join(FAKE_HOME, 'projects');
+  const root2 = path.join(FAKE_HOME, 'documents');
+  const outsidePath = path.join(FAKE_HOME, 'downloads', 'file.txt');
+  assert.equal(isPathUnderAnyRoot(outsidePath, [root1, root2], FAKE_HOME), false);
 });
 
 test('isPathUnderAnyRoot - empty roots array returns false', () => {
-  const fakeHome = process.platform === 'win32' ? 'C:/Users/test' : '/home/test';
-  const inputPath = path.join(fakeHome, 'any', 'path');
-  const result = isPathUnderAnyRoot(inputPath, [], fakeHome);
-  assert.equal(result, false);
+  const inputPath = path.join(FAKE_HOME, 'any', 'path');
+  assert.equal(isPathUnderAnyRoot(inputPath, [], FAKE_HOME), false);
 });
 
 test('isPathUnderAnyRoot - matches against multiple roots', () => {
-  const fakeHome = process.platform === 'win32' ? 'C:/Users/test' : '/home/test';
-  const root1 = path.join(fakeHome, 'projects');
-  const root2 = path.join(fakeHome, 'documents');
-  const root3 = path.join(fakeHome, 'downloads');
+  const root1 = path.join(FAKE_HOME, 'projects');
+  const root2 = path.join(FAKE_HOME, 'documents');
+  const root3 = path.join(FAKE_HOME, 'downloads');
   const inputPath = path.join(root2, 'work', 'report.txt');
-  const result = isPathUnderAnyRoot(inputPath, [root1, root2, root3], fakeHome);
-  assert.equal(result, true);
+  assert.equal(isPathUnderAnyRoot(inputPath, [root1, root2, root3], FAKE_HOME), true);
 });
 
 test('isPathUnderAnyRoot - handles tilde in roots', () => {
-  const fakeHome = process.platform === 'win32' ? 'C:/Users/test' : '/home/test';
-  const inputPath = path.join(fakeHome, 'projects', 'repo');
-  const result = isPathUnderAnyRoot(inputPath, ['~/projects'], fakeHome);
-  assert.equal(result, true);
+  const inputPath = path.join(FAKE_HOME, 'projects', 'repo');
+  assert.equal(isPathUnderAnyRoot(inputPath, ['~/projects'], FAKE_HOME), true);
 });
 
 test('isPathUnderAnyRoot - handles tilde in input path', () => {
-  const fakeHome = process.platform === 'win32' ? 'C:/Users/test' : '/home/test';
-  const root = path.join(fakeHome, 'projects');
-  const result = isPathUnderAnyRoot('~/projects/repo', [root], fakeHome);
-  assert.equal(result, true);
+  const root = path.join(FAKE_HOME, 'projects');
+  assert.equal(isPathUnderAnyRoot('~/projects/repo', [root], FAKE_HOME), true);
+});
+
+test('isPathUnderAnyRoot - does not match partial directory names', () => {
+  const root = path.join(FAKE_HOME, 'proj');
+  const inputPath = path.join(FAKE_HOME, 'projects', 'file.txt');
+  assert.equal(isPathUnderAnyRoot(inputPath, [root], FAKE_HOME), false);
 });

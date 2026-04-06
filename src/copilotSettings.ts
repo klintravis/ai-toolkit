@@ -1,10 +1,10 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { isPathUnderAnyRoot, toHomeRelativePath } from './pathUtils';
+import { isPathUnderAnyRoot, normalizeForComparison, toHomeRelativePath } from './pathUtils';
 import { AssetType, SourceFormat, Toolkit } from './types';
 
-const MANAGED_TOOLKIT_ROOTS_SETTING_SECTION = 'aiToolkit';
-const MANAGED_TOOLKIT_ROOTS_SETTING_KEY = 'managedToolkitRoots';
+const MANAGED_ROOTS_SECTION = 'aiToolkit';
+const MANAGED_ROOTS_KEY = 'managedToolkitRoots';
 
 const DISCOVERY_LOCATION_SETTINGS: Array<{ assetType: AssetType; key: string; label: string }> = [
   { assetType: AssetType.Instruction, key: 'instructionsFilesLocations', label: 'instruction file locations' },
@@ -26,10 +26,6 @@ export class CopilotSettingsManager {
     this.outputChannel = outputChannel;
   }
 
-  /**
-   * Configure Copilot to discover assets from the given enabled toolkits.
-   * Writes settings at the User (global) level so they apply across all workspaces.
-   */
   async applyToolkits(toolkits: Toolkit[]): Promise<void> {
     const enabledToolkits = toolkits.filter(toolkit => toolkit.enabled);
     const knownToolkitRoots = toolkits.map(toolkit => toolkit.rootPath);
@@ -37,7 +33,7 @@ export class CopilotSettingsManager {
     const cleanupRoots = this.mergeUniquePaths([...knownToolkitRoots, ...persistedManagedRoots]);
     const unsupportedToolkitNames = new Set<string>();
 
-    await this.ensureFeatureFlags(enabledToolkits);
+    await this.enableRequiredFeatureFlags(enabledToolkits);
     await this.updateCodeGenInstructions(enabledToolkits, cleanupRoots);
 
     for (const locationSetting of DISCOVERY_LOCATION_SETTINGS) {
@@ -57,21 +53,23 @@ export class CopilotSettingsManager {
       );
     }
 
-    await this.cleanupLegacyInstructionPatterns(cleanupRoots);
+    await this.removeLegacyInstructionPatterns(cleanupRoots);
     await this.setManagedToolkitRoots(knownToolkitRoots);
   }
 
-  /**
-   * Remove all managed Copilot settings entries.
-   */
   async removeAll(): Promise<void> {
     await this.applyToolkits([]);
   }
 
   /**
    * Enable Copilot feature flags that control asset discovery.
+   *
+   * Flags are only set to `true`, never removed, because they enable general
+   * Copilot capabilities (instruction files, skills, hooks) that the user may
+   * also rely on outside of this extension. Removing them could disable
+   * features the user intentionally configured elsewhere.
    */
-  private async ensureFeatureFlags(enabledToolkits: Toolkit[]): Promise<void> {
+  private async enableRequiredFeatureFlags(enabledToolkits: Toolkit[]): Promise<void> {
     const activeTypes = new Set<AssetType>();
     for (const toolkit of enabledToolkits) {
       for (const asset of toolkit.assets) {
@@ -93,16 +91,11 @@ export class CopilotSettingsManager {
     }
   }
 
-  /**
-   * Update github.copilot.chat.codeGeneration.instructions with absolute
-   * file paths pointing at external toolkit instruction files.
-   */
   private async updateCodeGenInstructions(enabledToolkits: Toolkit[], knownToolkitRoots: string[]): Promise<void> {
     try {
       const config = vscode.workspace.getConfiguration('github.copilot.chat');
       const existing = config.get<Array<{ text?: string; file?: string }>>('codeGeneration.instructions', []);
 
-      // Collect absolute paths to instruction files from enabled toolkits
       const managedEntries: Array<{ file: string }> = [];
       for (const toolkit of enabledToolkits) {
         for (const asset of toolkit.assets) {
@@ -112,8 +105,7 @@ export class CopilotSettingsManager {
         }
       }
 
-      // Preserve user-defined entries: keep anything that isn't a path we manage.
-      // We tag managed paths by checking if they appear in any known toolkit path.
+      // Preserve user-defined entries: keep anything that isn't under a known toolkit root
       const userEntries = existing.filter(entry => {
         if ('file' in entry && typeof entry.file === 'string') {
           return !isPathUnderAnyRoot(entry.file, knownToolkitRoots);
@@ -129,10 +121,6 @@ export class CopilotSettingsManager {
     }
   }
 
-  /**
-   * Update Copilot discovery locations so external toolkit folders are scanned
-   * for custom agents, prompts, instructions, skills, and hooks.
-   */
   private async updateDiscoveryLocations(
     key: string,
     label: string,
@@ -152,13 +140,15 @@ export class CopilotSettingsManager {
       }
 
       for (const toolkit of enabledToolkits) {
-        const location = this.getDiscoveryFolder(toolkit, assetType);
-        const configuredPath = location ? this.toConfiguredLocationPath(location) : undefined;
-        if (configuredPath) {
-          cleaned[configuredPath] = true;
-        } else if (location) {
-          unsupportedToolkitNames.add(toolkit.name);
-          this.log(`Skipped unsupported ${label} path outside the user home: ${location}`);
+        const locations = this.getDiscoveryFolders(toolkit, assetType);
+        for (const location of locations) {
+          const tilePath = toHomeRelativePath(location);
+          if (tilePath) {
+            cleaned[tilePath] = true;
+          } else {
+            unsupportedToolkitNames.add(toolkit.name);
+            this.log(`Skipped unsupported ${label} path outside the user home: ${location}`);
+          }
         }
       }
 
@@ -169,11 +159,8 @@ export class CopilotSettingsManager {
     }
   }
 
-  /**
-   * Remove legacy instruction file patterns that were written by older builds
-   * of this extension before VS Code switched to explicit location settings.
-   */
-  private async cleanupLegacyInstructionPatterns(knownToolkitRoots: string[]): Promise<void> {
+  /** Remove legacy instruction file patterns from older extension versions. */
+  private async removeLegacyInstructionPatterns(knownToolkitRoots: string[]): Promise<void> {
     try {
       const config = vscode.workspace.getConfiguration('chat.instructionFiles');
       const existing = config.get<Record<string, boolean>>('patterns', {});
@@ -194,11 +181,7 @@ export class CopilotSettingsManager {
     }
   }
 
-  /**
-   * Add a toolkit folder as a workspace folder so Copilot can discover
-   * agents, skills, and prompts from its .github/ directory.
-   */
-  async addAsWorkspaceFolder(toolkit: Toolkit): Promise<void> {
+  addAsWorkspaceFolder(toolkit: Toolkit): void {
     const folders = vscode.workspace.workspaceFolders ?? [];
     const alreadyAdded = folders.some(f => f.uri.fsPath === toolkit.rootPath);
     if (alreadyAdded) {
@@ -213,10 +196,7 @@ export class CopilotSettingsManager {
     this.log(`Added ${toolkit.name} as workspace folder for full asset discovery`);
   }
 
-  /**
-   * Remove a toolkit's workspace folder.
-   */
-  async removeWorkspaceFolder(toolkit: Toolkit): Promise<void> {
+  removeWorkspaceFolder(toolkit: Toolkit): void {
     const folders = vscode.workspace.workspaceFolders ?? [];
     const index = folders.findIndex(f => f.uri.fsPath === toolkit.rootPath);
     if (index >= 0) {
@@ -225,54 +205,50 @@ export class CopilotSettingsManager {
     }
   }
 
-  private getDiscoveryFolder(toolkit: Toolkit, assetType: AssetType): string | undefined {
+  private getDiscoveryFolders(toolkit: Toolkit, assetType: AssetType): string[] {
     if (!toolkit.assets.some(asset => asset.type === assetType)) {
-      return undefined;
+      return [];
     }
 
-    return path.join(this.getAssetsRoot(toolkit), assetType);
-  }
-
-  private getAssetsRoot(toolkit: Toolkit): string {
+    const folders: string[] = [];
     if (toolkit.format === SourceFormat.CopilotCustomizer) {
-      return path.join(toolkit.rootPath, '.github');
+      folders.push(path.join(toolkit.rootPath, '.github', assetType));
+    } else {
+      folders.push(path.join(toolkit.rootPath, assetType));
+      // Hybrid repos may also have assets under .github/.
+      const githubAssetDir = path.join(toolkit.rootPath, '.github', assetType);
+      if (toolkit.assets.some(a => a.type === assetType && a.sourcePath.includes(`${path.sep}.github${path.sep}`))) {
+        folders.push(githubAssetDir);
+      }
     }
-    return toolkit.rootPath;
-  }
-
-  private toConfiguredLocationPath(folderPath: string): string | undefined {
-    return toHomeRelativePath(folderPath);
+    return folders;
   }
 
   private getManagedToolkitRoots(): string[] {
-    const config = vscode.workspace.getConfiguration(MANAGED_TOOLKIT_ROOTS_SETTING_SECTION);
-    const roots = config.get<string[]>(MANAGED_TOOLKIT_ROOTS_SETTING_KEY, []);
+    const config = vscode.workspace.getConfiguration(MANAGED_ROOTS_SECTION);
+    const roots = config.get<string[]>(MANAGED_ROOTS_KEY, []);
     return Array.isArray(roots) ? roots.filter(root => typeof root === 'string') : [];
   }
 
   private async setManagedToolkitRoots(roots: string[]): Promise<void> {
     try {
-      const config = vscode.workspace.getConfiguration(MANAGED_TOOLKIT_ROOTS_SETTING_SECTION);
+      const config = vscode.workspace.getConfiguration(MANAGED_ROOTS_SECTION);
       const nextRoots = this.mergeUniquePaths(roots);
-      await config.update(MANAGED_TOOLKIT_ROOTS_SETTING_KEY, nextRoots, vscode.ConfigurationTarget.Global);
-      this.log(`Updated ${MANAGED_TOOLKIT_ROOTS_SETTING_SECTION}.${MANAGED_TOOLKIT_ROOTS_SETTING_KEY}: ${nextRoots.length} roots`);
+      await config.update(MANAGED_ROOTS_KEY, nextRoots, vscode.ConfigurationTarget.Global);
+      this.log(`Updated ${MANAGED_ROOTS_SECTION}.${MANAGED_ROOTS_KEY}: ${nextRoots.length} roots`);
     } catch (err) {
-      this.log(`Could not update ${MANAGED_TOOLKIT_ROOTS_SETTING_SECTION}.${MANAGED_TOOLKIT_ROOTS_SETTING_KEY}: ${err}`);
+      this.log(`Could not update ${MANAGED_ROOTS_SECTION}.${MANAGED_ROOTS_KEY}: ${err}`);
     }
   }
 
   private mergeUniquePaths(paths: string[]): string[] {
     const deduped = new Map<string, string>();
-    for (const candidatePath of paths) {
-      const resolvedPath = path.resolve(candidatePath);
-      const key = process.platform === 'win32'
-        ? resolvedPath.toLowerCase()
-        : resolvedPath;
+    for (const p of paths) {
+      const key = normalizeForComparison(p);
       if (!deduped.has(key)) {
-        deduped.set(key, resolvedPath);
+        deduped.set(key, path.resolve(p));
       }
     }
-
     return [...deduped.values()];
   }
 

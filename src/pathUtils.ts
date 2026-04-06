@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
@@ -95,4 +96,24 @@ export function isPathUnderAnyRoot(inputPath: string, roots: string[], userHome?
   }
 
   return false;
+}
+
+/**
+ * Convert an absolute directory path to a portable toolkit ID.
+ * Uses ~/relative form when under the user's home, otherwise forward-slash absolute.
+ */
+export function toToolkitId(dirPath: string): string {
+  return toHomeRelativePath(dirPath) ?? path.resolve(dirPath).replace(/\\/g, '/');
+}
+
+/**
+ * Returns true if the path exists on disk (file, directory, or symlink target).
+ */
+export async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.promises.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
 }

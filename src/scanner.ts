@@ -1,30 +1,32 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { pathExists, toToolkitId } from './pathUtils';
 import { Asset, AssetType, SourceFormat, Toolkit } from './types';
+
+/** Maximum recursion depth when scanning asset subdirectories. */
+const MAX_SCAN_DEPTH = 5;
+
+/** Filenames excluded from asset discovery regardless of extension. */
+const EXCLUDED_FILENAMES = new Set([
+  'readme.md', 'changelog.md', 'license.md', 'contributing.md',
+]);
 
 /**
  * Scans configured folders to discover AI toolkits and their assets.
  */
 export class ToolkitScanner {
-  /**
-   * Scan a single root path and return all discovered toolkits.
-   * A root path may contain one toolkit (if it directly has assets)
-   * or multiple toolkits (if it contains subdirectories with assets).
-   */
   async scanPath(rootPath: string, enabledToolkits: Record<string, boolean>): Promise<Toolkit[]> {
     const resolved = path.resolve(rootPath);
-    if (!(await this.pathExists(resolved))) {
+    if (!(await pathExists(resolved))) {
       return [];
     }
 
-    const format = await this.detectFormat(resolved);
-    if (format !== null) {
-      // This path itself is a toolkit
-      const toolkit = await this.scanToolkit(resolved, format, enabledToolkits);
+    const detected = await this.detectFormat(resolved);
+    if (detected) {
+      const toolkit = await this.scanToolkit(resolved, detected.format, detected.mergeGithub, enabledToolkits);
       return toolkit ? [toolkit] : [];
     }
 
-    // Check if subdirectories are toolkits
     const toolkits: Toolkit[] = [];
     const entries = await this.readDirSafe(resolved);
     for (const entry of entries) {
@@ -32,9 +34,9 @@ export class ToolkitScanner {
         continue;
       }
       const subPath = path.join(resolved, entry.name);
-      const subFormat = await this.detectFormat(subPath);
-      if (subFormat !== null) {
-        const toolkit = await this.scanToolkit(subPath, subFormat, enabledToolkits);
+      const sub = await this.detectFormat(subPath);
+      if (sub) {
+        const toolkit = await this.scanToolkit(subPath, sub.format, sub.mergeGithub, enabledToolkits);
         if (toolkit) {
           toolkits.push(toolkit);
         }
@@ -45,20 +47,20 @@ export class ToolkitScanner {
   }
 
   /**
-   * Detect the format of a potential toolkit directory.
+   * Detect the source format and whether both roots have assets (hybrid repo).
+   * Returns null when no asset folders are found.
    */
-  private async detectFormat(dirPath: string): Promise<SourceFormat | null> {
-    // Check for CopilotCustomizer format (.github/ with asset subfolders)
+  private async detectFormat(dirPath: string): Promise<{ format: SourceFormat; mergeGithub: boolean } | null> {
+    const topHasAssets = await this.hasAssetFolders(dirPath);
     const githubDir = path.join(dirPath, '.github');
-    if ((await this.pathExists(githubDir)) && (await this.hasAssetFolders(githubDir))) {
-      return SourceFormat.CopilotCustomizer;
-    }
+    const githubHasAssets = (await pathExists(githubDir)) && (await this.hasAssetFolders(githubDir));
 
-    // Check for awesome-copilot format (top-level asset folders)
-    if (await this.hasAssetFolders(dirPath)) {
-      return SourceFormat.AwesomeCopilot;
+    if (topHasAssets) {
+      return { format: SourceFormat.AwesomeCopilot, mergeGithub: githubHasAssets };
     }
-
+    if (githubHasAssets) {
+      return { format: SourceFormat.CopilotCustomizer, mergeGithub: false };
+    }
     return null;
   }
 
@@ -66,7 +68,7 @@ export class ToolkitScanner {
     const assetFolders = Object.values(AssetType);
     for (const folder of assetFolders) {
       const fullPath = path.join(dirPath, folder);
-      if (await this.isDirectory(fullPath)) {
+      if (await isDirectory(fullPath)) {
         return true;
       }
     }
@@ -76,15 +78,34 @@ export class ToolkitScanner {
   private async scanToolkit(
     rootPath: string,
     format: SourceFormat,
+    mergeGithub: boolean,
     enabledToolkits: Record<string, boolean>
   ): Promise<Toolkit | null> {
-    const id = this.generateToolkitId(rootPath);
+    const id = this.createToolkitId(rootPath);
     const name = path.basename(rootPath);
-    const assetsRoot = format === SourceFormat.CopilotCustomizer
-      ? path.join(rootPath, '.github')
-      : rootPath;
 
-    const assets = await this.discoverAssets(assetsRoot, id);
+    const assetRoots: string[] = [];
+    if (format === SourceFormat.CopilotCustomizer) {
+      assetRoots.push(path.join(rootPath, '.github'));
+    } else {
+      assetRoots.push(rootPath);
+      if (mergeGithub) {
+        assetRoots.push(path.join(rootPath, '.github'));
+      }
+    }
+
+    const assets: Asset[] = [];
+    const seen = new Set<string>();
+    for (const root of assetRoots) {
+      const discovered = await this.discoverAssets(root, id);
+      for (const asset of discovered) {
+        if (!seen.has(asset.id)) {
+          seen.add(asset.id);
+          assets.push(asset);
+        }
+      }
+    }
+
     if (assets.length === 0) {
       return null;
     }
@@ -104,11 +125,11 @@ export class ToolkitScanner {
 
     for (const type of Object.values(AssetType)) {
       const folderPath = path.join(assetsRoot, type);
-      if (!(await this.pathExists(folderPath))) {
+      if (!(await pathExists(folderPath))) {
         continue;
       }
 
-      const discovered = await this.scanAssetFolder(folderPath, type, toolkitId, type);
+      const discovered = await this.scanAssetFolder(folderPath, type, toolkitId, type, MAX_SCAN_DEPTH);
       assets.push(...discovered);
     }
 
@@ -119,35 +140,48 @@ export class ToolkitScanner {
     folderPath: string,
     type: AssetType,
     toolkitId: string,
-    relativeBase: string
+    relativeBase: string,
+    depth: number
   ): Promise<Asset[]> {
+    if (depth <= 0) {
+      return [];
+    }
+
     const assets: Asset[] = [];
     const entries = await this.readDirSafe(folderPath);
 
     for (const entry of entries) {
-      const fullPath = path.join(folderPath, entry.name);
+      if (entry.name.startsWith('.')) {
+        continue;
+      }
 
-      if (entry.isDirectory()) {
-        // Folder-based assets: skills, plugins, hooks, standards
+      const fullPath = path.join(folderPath, entry.name);
+      const kind = await this.classifyEntry(fullPath, entry);
+
+      if (kind.isDirectory) {
         if (this.isFolderAsset(type)) {
           const relativePath = `${relativeBase}/${entry.name}`;
-          const assetName = this.formatAssetName(entry.name);
+          const assetName = this.deriveDisplayName(entry.name);
+          const folderAssetId = `${toolkitId}::${relativePath}`;
+          const children = await this.scanFolderContents(fullPath, type, folderAssetId, relativePath, depth - 1);
           assets.push({
-            id: `${toolkitId}::${relativePath}`,
+            id: folderAssetId,
             name: assetName,
             type,
             sourcePath: fullPath,
             relativePath,
             isFolder: true,
+            children,
           });
         } else {
-          // Recurse into subdirectories for file-based assets (e.g., standards with category folders)
-          const subAssets = await this.scanAssetFolder(fullPath, type, toolkitId, `${relativeBase}/${entry.name}`);
+          const subAssets = await this.scanAssetFolder(
+            fullPath, type, toolkitId, `${relativeBase}/${entry.name}`, depth - 1
+          );
           assets.push(...subAssets);
         }
-      } else if (entry.isFile() && this.matchesAssetType(entry.name, type)) {
+      } else if (kind.isFile && this.isAssetFile(entry.name, type)) {
         const relativePath = `${relativeBase}/${entry.name}`;
-        const assetName = this.formatAssetName(entry.name);
+        const assetName = this.deriveDisplayName(entry.name);
         assets.push({
           id: `${toolkitId}::${relativePath}`,
           name: assetName,
@@ -162,12 +196,58 @@ export class ToolkitScanner {
     return assets;
   }
 
+  private async scanFolderContents(
+    folderPath: string,
+    type: AssetType,
+    parentId: string,
+    parentRelativePath: string,
+    depth: number
+  ): Promise<Asset[]> {
+    if (depth <= 0) { return []; }
+    const children: Asset[] = [];
+    const entries = await this.readDirSafe(folderPath);
+
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) { continue; }
+      const fullPath = path.join(folderPath, entry.name);
+      const relativePath = `${parentRelativePath}/${entry.name}`;
+      const kind = await this.classifyEntry(fullPath, entry);
+      if (kind.isDirectory) {
+        const nested = await this.scanFolderContents(fullPath, type, parentId, relativePath, depth - 1);
+        if (nested.length > 0) {
+          children.push({
+            id: `${parentId}::${entry.name}`,
+            name: entry.name,
+            type,
+            sourcePath: fullPath,
+            relativePath,
+            isFolder: true,
+            children: nested,
+          });
+        }
+      } else if (kind.isFile) {
+        children.push({
+          id: `${parentId}::${entry.name}`,
+          name: entry.name,
+          type,
+          sourcePath: fullPath,
+          relativePath,
+          isFolder: false,
+        });
+      }
+    }
+    return children;
+  }
+
   private isFolderAsset(type: AssetType): boolean {
     return [AssetType.Skill, AssetType.Plugin, AssetType.Hook, AssetType.Standard].includes(type);
   }
 
-  private matchesAssetType(filename: string, type: AssetType): boolean {
+  private isAssetFile(filename: string, type: AssetType): boolean {
     const lower = filename.toLowerCase();
+    if (EXCLUDED_FILENAMES.has(lower)) {
+      return false;
+    }
     switch (type) {
       case AssetType.Agent:
         return lower.endsWith('.agent.md');
@@ -182,8 +262,7 @@ export class ToolkitScanner {
     }
   }
 
-  private formatAssetName(filename: string): string {
-    // Strip known suffixes
+  private deriveDisplayName(filename: string): string {
     let name = filename;
     const suffixes = ['.agent.md', '.instructions.md', '.prompt.md', '.md', '.json', '.yaml'];
     for (const suffix of suffixes) {
@@ -192,42 +271,54 @@ export class ToolkitScanner {
         break;
       }
     }
-    // Convert kebab-case to title
     return name
       .replace(/[-_]/g, ' ')
       .replace(/\b\w/g, c => c.toUpperCase());
   }
 
-  private generateToolkitId(rootPath: string): string {
-    // Use the last two path segments as a stable ID
-    const parts = rootPath.replace(/\\/g, '/').split('/').filter(Boolean);
-    const tail = parts.slice(-2).join('/');
-    return tail;
+  private createToolkitId(rootPath: string): string {
+    return toToolkitId(rootPath);
   }
 
-  private async pathExists(targetPath: string): Promise<boolean> {
-    try {
-      await fs.promises.access(targetPath);
-      return true;
-    } catch {
-      return false;
-    }
-  }
 
-  private async isDirectory(dirPath: string): Promise<boolean> {
-    try {
-      const stat = await fs.promises.stat(dirPath);
-      return stat.isDirectory();
-    } catch {
-      return false;
+  /**
+   * Classify a directory entry as file or directory, following symlinks.
+   * `Dirent.isFile()` / `isDirectory()` return false for symlinks — we
+   * stat the target so symlinked assets (e.g. picks) are classified correctly.
+   */
+  private async classifyEntry(
+    fullPath: string,
+    entry: fs.Dirent
+  ): Promise<{ isFile: boolean; isDirectory: boolean }> {
+    if (entry.isSymbolicLink()) {
+      try {
+        const stat = await fs.promises.stat(fullPath);
+        return { isFile: stat.isFile(), isDirectory: stat.isDirectory() };
+      } catch {
+        // broken symlink — treat as nothing
+        return { isFile: false, isDirectory: false };
+      }
     }
+    return { isFile: entry.isFile(), isDirectory: entry.isDirectory() };
   }
 
   private async readDirSafe(dirPath: string): Promise<fs.Dirent[]> {
     try {
       return await fs.promises.readdir(dirPath, { withFileTypes: true });
-    } catch {
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn(`Cannot read directory ${dirPath}:`, err);
+      }
       return [];
     }
+  }
+}
+
+async function isDirectory(dirPath: string): Promise<boolean> {
+  try {
+    const stat = await fs.promises.stat(dirPath);
+    return stat.isDirectory();
+  } catch {
+    return false;
   }
 }
