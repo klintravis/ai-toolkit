@@ -210,18 +210,14 @@ export class CopilotSettingsManager {
       return [];
     }
 
-    const folders: string[] = [];
-    if (toolkit.format === SourceFormat.CopilotCustomizer) {
-      folders.push(path.join(toolkit.rootPath, '.github', assetType));
-    } else {
-      folders.push(path.join(toolkit.rootPath, assetType));
-      // Hybrid repos may also have assets under .github/.
-      const githubAssetDir = path.join(toolkit.rootPath, '.github', assetType);
-      if (toolkit.assets.some(a => a.type === assetType && a.sourcePath.includes(`${path.sep}.github${path.sep}`))) {
-        folders.push(githubAssetDir);
+    // Collect unique parent directories from actual asset sourcePaths.
+    const folderSet = new Set<string>();
+    for (const asset of toolkit.assets) {
+      if (asset.type === assetType) {
+        folderSet.add(path.dirname(asset.sourcePath));
       }
     }
-    return folders;
+    return Array.from(folderSet);
   }
 
   private getManagedToolkitRoots(): string[] {
