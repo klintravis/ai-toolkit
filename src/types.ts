@@ -1,28 +1,27 @@
 /**
  * Asset types recognized by the AI Toolkit.
  * Maps to folder names in both awesome-copilot and CopilotCustomizer formats.
+ * Open string type allowing new types to be added via configuration without code changes.
  */
-export enum AssetType {
-  Agent = 'agents',
-  Instruction = 'instructions',
-  Skill = 'skills',
-  Prompt = 'prompts',
-  Plugin = 'plugins',
-  Hook = 'hooks',
-  Workflow = 'workflows',
-  Standard = 'standards',
-}
+export type AssetType = string;
+export const AssetType = {
+  Agent: 'agents',
+  Instruction: 'instructions',
+  Skill: 'skills',
+  Prompt: 'prompts',
+  Plugin: 'plugins',
+  Hook: 'hooks',
+  Workflow: 'workflows',
+  McpServer: 'mcps',
+  Standard: 'standards',
+  Doc: 'docs',
+} as const;
 
 /**
  * The format/layout of a discovered toolkit source.
  */
 export enum SourceFormat {
-  /** awesome-copilot style: assets at top-level (agents/, skills/, etc.) */
-  AwesomeCopilot = 'awesome-copilot',
-  /** CopilotCustomizer style: assets under .github/ */
-  CopilotCustomizer = 'copilot-customizer',
-  /** Generic: a single folder of assets (e.g. just an instructions/ folder) */
-  Generic = 'generic',
+  DualPlatform = 'dual-platform',
 }
 
 /**
@@ -41,8 +40,33 @@ export interface Asset {
   relativePath: string;
   /** Whether this is a folder-based asset (e.g., skills) */
   isFolder: boolean;
+  /** Which platform(s) this asset belongs to */
+  platform: 'copilot' | 'claude' | 'both' | 'shared';
   /** For folder-based assets, the files contained inside (shallow recursive). */
   children?: Asset[];
+}
+
+/**
+ * Asset discovery mapping — maps source folders to asset types and platforms.
+ */
+export interface AssetMapping {
+  /** Relative path from toolkit root, e.g. "claude/skills" */
+  folder: string;
+  /** Asset type string, e.g. "skills" or "mcps" */
+  assetType: AssetType;
+  platform: 'copilot' | 'claude' | 'both' | 'shared';
+  /** When true, each subdir is a folder asset. When false, walk for files. */
+  isFolder?: boolean;
+  /** File extensions to accept, e.g. [".agent.md"]. Falls back to .md/.json/.yaml. */
+  extensions?: string[];
+}
+
+/**
+ * Optional manifest in a toolkit root that defines asset mappings.
+ */
+export interface ToolkitManifest {
+  name?: string;
+  mappings?: AssetMapping[];
 }
 
 /**
@@ -110,6 +134,8 @@ export interface PinRecord {
   linkType: 'symlink' | 'junction' | 'copy';
   /** True when the source is a folder asset. */
   isFolder: boolean;
+  /** Which platform(s) this asset belongs to */
+  platform: 'copilot' | 'claude' | 'both' | 'shared';
   /** ISO timestamp when pinned. */
   pinnedAt: string;
 }
