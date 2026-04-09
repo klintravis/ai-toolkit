@@ -1,9 +1,14 @@
 /**
  * Asset types recognized by the AI Toolkit.
- * Maps to folder names in both awesome-copilot and CopilotCustomizer formats.
+ * Maps to folder names within platform subdirectories (e.g. copilot/agents, claude/skills).
  * Open string type allowing new types to be added via configuration without code changes.
  */
 export type AssetType = string;
+
+/**
+ * Supported platforms for assets.
+ */
+export type AssetPlatform = 'copilot' | 'claude' | 'both' | 'shared';
 export const AssetType = {
   Agent: 'agents',
   Instruction: 'instructions',
@@ -41,7 +46,7 @@ export interface Asset {
   /** Whether this is a folder-based asset (e.g., skills) */
   isFolder: boolean;
   /** Which platform(s) this asset belongs to */
-  platform: 'copilot' | 'claude' | 'both' | 'shared';
+  platform: AssetPlatform;
   /** For folder-based assets, the files contained inside (shallow recursive). */
   children?: Asset[];
 }
@@ -54,7 +59,7 @@ export interface AssetMapping {
   folder: string;
   /** Asset type string, e.g. "skills" or "mcps" */
   assetType: AssetType;
-  platform: 'copilot' | 'claude' | 'both' | 'shared';
+  platform: AssetPlatform;
   /** When true, each subdir is a folder asset. When false, walk for files. */
   isFolder?: boolean;
   /** File extensions to accept, e.g. [".agent.md"]. Falls back to .md/.json/.yaml. */
@@ -135,7 +140,7 @@ export interface PinRecord {
   /** True when the source is a folder asset. */
   isFolder: boolean;
   /** Which platform(s) this asset belongs to */
-  platform: 'copilot' | 'claude' | 'both' | 'shared';
+  platform?: AssetPlatform;
   /** ISO timestamp when pinned. */
   pinnedAt: string;
 }
