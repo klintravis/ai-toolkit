@@ -1,7 +1,9 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { ClonedToolkitsStore } from './clonedToolkitsStore';
 import { DashboardHost, DashboardMessage, DashboardPanel, DashboardState } from './dashboard';
 import { CopilotSettingsManager } from './copilotSettings';
+import { ClaudeSettingsManager } from './claudeSettings';
 import { GitError, GitToolkitManager, deriveRepoName, isValidRemoteUrl, normalizeRemoteUrl } from './git';
 import { expandHomePath, normalizeForComparison, pathExists, toToolkitId } from './pathUtils';
 import { PinManager, PinRecordStore, isInsidePinsDir } from './picks';
@@ -12,6 +14,7 @@ import { UpdateChecker } from './updateChecker';
 
 let scanner: ToolkitScanner;
 let copilotSettings: CopilotSettingsManager;
+let claudeSettings: ClaudeSettingsManager;
 let treeProvider: ToolkitTreeProvider;
 let gitManager: GitToolkitManager;
 let clonedStore: ClonedToolkitsStore;
@@ -31,6 +34,13 @@ export function activate(context: vscode.ExtensionContext): void {
   outputChannel = vscode.window.createOutputChannel('AI Toolkit');
   scanner = new ToolkitScanner();
   copilotSettings = new CopilotSettingsManager(outputChannel);
+  claudeSettings = new ClaudeSettingsManager(
+    context,
+    outputChannel,
+    () => vscode.workspace.getConfiguration('aiToolkit').get<string>('claudeSettingsPath', '~/.claude/settings.json'),
+    () => vscode.workspace.getConfiguration('aiToolkit').get<string>('claudePluginsPath', '~/.ai-toolkits/claude-plugins'),
+    () => vscode.workspace.getConfiguration('aiToolkit').get<string>('claudePluginsRegistryPath', '~/.claude/plugins'),
+  );
   treeProvider = new ToolkitTreeProvider();
   gitManager = new GitToolkitManager(outputChannel);
   clonedStore = new ClonedToolkitsStore(context);
@@ -139,7 +149,7 @@ export function deactivate(): void {
   if (updateCheckInterval) { clearInterval(updateCheckInterval); }
 }
 
-function isCopilotAutoConfigEnabled(): boolean {
+function isAutoConfigEnabled(): boolean {
   return vscode.workspace.getConfiguration('aiToolkit').get<boolean>('configureCopilotSettings', true);
 }
 
@@ -175,6 +185,33 @@ async function refreshToolkits(): Promise<void> {
   }
 }
 
+async function warnIfOldFormatToolkits(toolkitPaths: string[], discoveredCount: number): Promise<void> {
+  if (discoveredCount > 0) return;
+  const OLD_FORMAT_INDICATORS = ['agents', 'instructions', 'skills', 'prompts'];
+  for (const rawPath of toolkitPaths) {
+    const tkPath = expandHomePath(rawPath);
+    for (const folder of OLD_FORMAT_INDICATORS) {
+      if (await pathExists(path.join(tkPath, folder))) {
+        void vscode.window.showWarningMessage(
+          `AI Toolkit: "${path.basename(rawPath)}" uses the old format. Migrate to copilot/ and claude/ subfolders to use the new DualPlatform format.`,
+          'Learn More',
+        );
+        return;
+      }
+    }
+    const githubDir = path.join(tkPath, '.github');
+    for (const folder of OLD_FORMAT_INDICATORS) {
+      if (await pathExists(path.join(githubDir, folder))) {
+        void vscode.window.showWarningMessage(
+          `AI Toolkit: "${path.basename(rawPath)}" uses the old .github/ format. Migrate to the new DualPlatform layout.`,
+          'Learn More',
+        );
+        return;
+      }
+    }
+  }
+}
+
 async function scanAndApplyToolkits(): Promise<void> {
   const config = vscode.workspace.getConfiguration('aiToolkit');
   const toolkitPaths = config.get<string[]>('toolkitPaths', []);
@@ -192,8 +229,11 @@ async function scanAndApplyToolkits(): Promise<void> {
     if (result.status === 'fulfilled' && result.value.length > 0) {
       toolkitsBySource.set(toolkitPaths[i], result.value);
       discovered.push(...result.value);
-    } else if (result.status === 'rejected') {
-      outputChannel.appendLine(`Failed to scan ${toolkitPaths[i]}: ${result.reason}`);
+      outputChannel.appendLine(`[scan] Found ${result.value.map(t => `"${t.name}"`).join(', ')} in: ${toolkitPaths[i]}`);
+    } else if (result.status === 'fulfilled') {
+      outputChannel.appendLine(`[scan] No toolkits found in: ${toolkitPaths[i]} — folder must contain a copilot/, claude/, or shared/ subfolder (or be a non-empty skill folder)`);
+    } else {
+      outputChannel.appendLine(`[scan] Failed to scan ${toolkitPaths[i]}: ${result.reason}`);
     }
   }
 
@@ -207,11 +247,13 @@ async function scanAndApplyToolkits(): Promise<void> {
   }
 
   allToolkits = discovered;
+  await warnIfOldFormatToolkits(toolkitPaths, discovered.length);
   treeProvider.setToolkits(toolkitsBySource);
   updateStatusBarAndTree();
 
-  if (isCopilotAutoConfigEnabled()) {
+  if (isAutoConfigEnabled()) {
     await copilotSettings.applyToolkits(allToolkits);
+    await claudeSettings.applyToolkits(allToolkits);
   }
 }
 
@@ -301,8 +343,9 @@ async function toggleToolkit(node: { toolkit?: Toolkit }, enabled: boolean): Pro
   treeProvider.refresh();
   updateStatusBarAndTree();
 
-  if (isCopilotAutoConfigEnabled()) {
+  if (isAutoConfigEnabled()) {
     await copilotSettings.applyToolkits(allToolkits);
+    await claudeSettings.applyToolkits(allToolkits);
   }
 }
 
@@ -319,8 +362,9 @@ async function toggleAll(enabled: boolean): Promise<void> {
   treeProvider.refresh();
   updateStatusBarAndTree();
 
-  if (isCopilotAutoConfigEnabled()) {
+  if (isAutoConfigEnabled()) {
     await copilotSettings.applyToolkits(allToolkits);
+    await claudeSettings.applyToolkits(allToolkits);
   }
 }
 
@@ -352,6 +396,8 @@ async function removeEnabledFlag(toolkitId: string): Promise<void> {
     delete enabledMap[toolkitId];
     await cfg.update('enabledToolkits', enabledMap, vscode.ConfigurationTarget.Global);
   } else {
+    // The toolkit had no explicit enabled entry (defaults to false).
+    // Still refresh so the tree reflects the deletion.
     await refreshToolkits();
   }
 }

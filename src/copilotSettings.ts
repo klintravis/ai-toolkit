@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { isPathUnderAnyRoot, normalizeForComparison, toHomeRelativePath } from './pathUtils';
-import { AssetType, SourceFormat, Toolkit } from './types';
+import { AssetType, Toolkit } from './types';
 
 const MANAGED_ROOTS_SECTION = 'aiToolkit';
 const MANAGED_ROOTS_KEY = 'managedToolkitRoots';
@@ -73,7 +73,9 @@ export class CopilotSettingsManager {
     const activeTypes = new Set<AssetType>();
     for (const toolkit of enabledToolkits) {
       for (const asset of toolkit.assets) {
-        activeTypes.add(asset.type);
+        if (asset.platform === 'copilot' || asset.platform === 'both') {
+          activeTypes.add(asset.type);
+        }
       }
     }
 
@@ -99,7 +101,8 @@ export class CopilotSettingsManager {
       const managedEntries: Array<{ file: string }> = [];
       for (const toolkit of enabledToolkits) {
         for (const asset of toolkit.assets) {
-          if (asset.type === AssetType.Instruction && !asset.isFolder) {
+          if (asset.type === AssetType.Instruction && !asset.isFolder &&
+              (asset.platform === 'copilot' || asset.platform === 'both')) {
             managedEntries.push({ file: asset.sourcePath });
           }
         }
@@ -206,22 +209,20 @@ export class CopilotSettingsManager {
   }
 
   private getDiscoveryFolders(toolkit: Toolkit, assetType: AssetType): string[] {
-    if (!toolkit.assets.some(asset => asset.type === assetType)) {
-      return [];
-    }
-
-    const folders: string[] = [];
-    if (toolkit.format === SourceFormat.CopilotCustomizer) {
-      folders.push(path.join(toolkit.rootPath, '.github', assetType));
-    } else {
-      folders.push(path.join(toolkit.rootPath, assetType));
-      // Hybrid repos may also have assets under .github/.
-      const githubAssetDir = path.join(toolkit.rootPath, '.github', assetType);
-      if (toolkit.assets.some(a => a.type === assetType && a.sourcePath.includes(`${path.sep}.github${path.sep}`))) {
-        folders.push(githubAssetDir);
+    const folders = new Set<string>();
+    for (const asset of toolkit.assets) {
+      if (asset.type !== assetType) continue;
+      if (asset.platform !== 'copilot' && asset.platform !== 'both') continue;
+      // Derive discovery folder: <root>/<top-two-path-segments>
+      // e.g. claude/skills/my-skill → <root>/claude/skills
+      //      copilot/agents/foo.agent.md → <root>/copilot/agents
+      const relPath = path.relative(toolkit.rootPath, asset.sourcePath).replace(/\\/g, '/');
+      const parts = relPath.split('/');
+      if (parts.length >= 2) {
+        folders.add(path.join(toolkit.rootPath, parts[0], parts[1]));
       }
     }
-    return folders;
+    return [...folders];
   }
 
   private getManagedToolkitRoots(): string[] {

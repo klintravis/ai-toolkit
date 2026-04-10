@@ -1,28 +1,40 @@
 /**
  * Asset types recognized by the AI Toolkit.
- * Maps to folder names in both awesome-copilot and CopilotCustomizer formats.
+ * Maps to folder names within platform subdirectories (e.g. copilot/agents, claude/skills).
+ * Open string type allowing new types to be added via configuration without code changes.
  */
-export enum AssetType {
-  Agent = 'agents',
-  Instruction = 'instructions',
-  Skill = 'skills',
-  Prompt = 'prompts',
-  Plugin = 'plugins',
-  Hook = 'hooks',
-  Workflow = 'workflows',
-  Standard = 'standards',
-}
+export type AssetType = string;
+
+/**
+ * Supported platforms for assets.
+ * - 'copilot': GitHub Copilot only
+ * - 'claude': Claude Code only
+ * - 'both': registered with both platforms (e.g. claude/skills)
+ * - 'shared': surfaced in the tree view only; no settings written to either platform
+ */
+export type AssetPlatform = 'copilot' | 'claude' | 'both' | 'shared';
+export const AssetType = {
+  Agent: 'agents',
+  Instruction: 'instructions',
+  Skill: 'skills',
+  Prompt: 'prompts',
+  Plugin: 'plugins',
+  Hook: 'hooks',
+  Workflow: 'workflows',
+  McpServer: 'mcps',
+  Standard: 'standards',
+  Doc: 'docs',
+} as const;
 
 /**
  * The format/layout of a discovered toolkit source.
+ * Kept as an enum (rather than a string literal type) so new formats can be
+ * added without changing every switch statement that exhausts the type.
  */
 export enum SourceFormat {
-  /** awesome-copilot style: assets at top-level (agents/, skills/, etc.) */
-  AwesomeCopilot = 'awesome-copilot',
-  /** CopilotCustomizer style: assets under .github/ */
-  CopilotCustomizer = 'copilot-customizer',
-  /** Generic: a single folder of assets (e.g. just an instructions/ folder) */
-  Generic = 'generic',
+  DualPlatform = 'dual-platform',
+  /** Standalone folder sideloaded directly (not a structured copilot/claude/shared repo). */
+  Sideloaded = 'sideloaded',
 }
 
 /**
@@ -41,8 +53,33 @@ export interface Asset {
   relativePath: string;
   /** Whether this is a folder-based asset (e.g., skills) */
   isFolder: boolean;
+  /** Which platform(s) this asset belongs to */
+  platform: AssetPlatform;
   /** For folder-based assets, the files contained inside (shallow recursive). */
   children?: Asset[];
+}
+
+/**
+ * Asset discovery mapping — maps source folders to asset types and platforms.
+ */
+export interface AssetMapping {
+  /** Relative path from toolkit root, e.g. "claude/skills" */
+  folder: string;
+  /** Asset type string, e.g. "skills" or "mcps" */
+  assetType: AssetType;
+  platform: AssetPlatform;
+  /** When true, each subdir is a folder asset. When false, walk for files. */
+  isFolder?: boolean;
+  /** File extensions to accept, e.g. [".agent.md"]. Falls back to .md/.json/.yaml. */
+  extensions?: string[];
+}
+
+/**
+ * Optional manifest in a toolkit root that defines asset mappings.
+ */
+export interface ToolkitManifest {
+  name?: string;
+  mappings?: AssetMapping[];
 }
 
 /**
@@ -110,6 +147,8 @@ export interface PinRecord {
   linkType: 'symlink' | 'junction' | 'copy';
   /** True when the source is a folder asset. */
   isFolder: boolean;
+  /** Which platform(s) this asset belongs to */
+  platform?: AssetPlatform;
   /** ISO timestamp when pinned. */
   pinnedAt: string;
 }
