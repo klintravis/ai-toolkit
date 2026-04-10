@@ -199,6 +199,37 @@ test('applyToolkits - symlinks skill folder into claude plugins dir', async () =
   } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
 });
 
+test('applyToolkits - symlinks native hooks/ and agents/ dirs for sideloaded plugins', async () => {
+  const tmpDir = makeTempDir('cs-native-dirs');
+  const settingsPath = path.join(tmpDir, 'settings.json');
+  const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
+  try {
+    // Simulate a sideloaded plugin with native hooks/ and agents/ directories
+    const skillDir = path.join(tmpDir, 'my-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# skill');
+
+    const hooksDir = path.join(tmpDir, 'hooks');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    fs.writeFileSync(path.join(hooksDir, 'hooks.json'), JSON.stringify({ hooks: { SessionStart: [] } }));
+
+    const agentsDir = path.join(tmpDir, 'agents');
+    fs.mkdirSync(agentsDir, { recursive: true });
+    fs.writeFileSync(path.join(agentsDir, 'helper.md'), '# agent');
+
+    const toolkit = makeToolkit(tmpDir, [makeAsset(AssetType.Skill, 'claude', 'my-skill', skillDir, true)]);
+    const ctx = makeContext();
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
+    await mgr.applyToolkits([toolkit]);
+
+    const tkName = path.basename(tmpDir);
+    const pluginDir = path.join(pluginsPath, tkName);
+    assert.ok(fs.existsSync(path.join(pluginDir, 'hooks')), 'hooks/ should be linked into plugin dir');
+    assert.ok(fs.existsSync(path.join(pluginDir, 'agents')), 'agents/ should be linked into plugin dir');
+  } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
+});
+
 // --- Relative path resolution ---
 
 test('applyToolkits - resolves relative args in MCP entry', async () => {
@@ -249,9 +280,9 @@ test('applyToolkits - registers plugin in installed_plugins.json and enabledPlug
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
     assert.ok(settings.enabledPlugins?.[pluginKey], 'Plugin should be enabled in settings');
 
-    // Check package.json created at plugin root
-    const pluginJson = path.join(pluginsPath, tkName, 'package.json');
-    assert.ok(fs.existsSync(pluginJson), 'package.json should be created at plugin root');
+    // Check .claude-plugin/plugin.json created at plugin root
+    const pluginJson = path.join(pluginsPath, tkName, '.claude-plugin', 'plugin.json');
+    assert.ok(fs.existsSync(pluginJson), '.claude-plugin/plugin.json should be created at plugin root');
   } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
 });
 

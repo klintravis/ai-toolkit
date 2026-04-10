@@ -161,9 +161,9 @@ export class ClaudeSettingsManager {
 
       await fs.promises.mkdir(skillsDir, { recursive: true });
 
-      // Claude Code identifies plugins by package.json at the plugin root.
+      // Claude Code plugin manifest — must be at .claude-plugin/plugin.json (not package.json).
       await this.writeJsonAtomic(
-        path.join(pluginDir, 'package.json'),
+        path.join(pluginDir, '.claude-plugin', 'plugin.json'),
         {
           name: tkName,
           version: '1.0.0',
@@ -171,7 +171,7 @@ export class ClaudeSettingsManager {
         }
       );
 
-      // Symlink each skill
+      // Symlink each skill directory.
       for (const skillAsset of skillAssets) {
         const linkPath = path.join(skillsDir, path.basename(skillAsset.sourcePath));
         try {
@@ -187,6 +187,31 @@ export class ClaudeSettingsManager {
             newPluginPaths.push(linkPath);
           }
         }
+      }
+
+      // For native Claude Code plugins (those that already have hooks/, agents/, commands/
+      // at their root), symlink those directories so Claude Code can auto-discover them.
+      // This covers sideloaded plugins that use the full plugin layout rather than
+      // the DualPlatform copilot/claude/shared folder structure.
+      for (const nativeDir of ['hooks', 'agents', 'commands']) {
+        const sourceDir = path.join(toolkit.rootPath, nativeDir);
+        try {
+          await fs.promises.access(sourceDir);
+          const linkPath = path.join(pluginDir, nativeDir);
+          try {
+            await fs.promises.symlink(
+              sourceDir, linkPath,
+              process.platform === 'win32' ? 'junction' : 'dir'
+            );
+            newPluginPaths.push(linkPath);
+          } catch (err: unknown) {
+            if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+              this.log.appendLine(`[AI Toolkit / Claude] Could not link ${nativeDir}/ for ${toolkit.name}: ${err}`);
+            } else {
+              newPluginPaths.push(linkPath);
+            }
+          }
+        } catch { /* directory doesn't exist, skip */ }
       }
 
       // Register in installed_plugins.json
