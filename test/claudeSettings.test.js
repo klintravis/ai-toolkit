@@ -194,7 +194,7 @@ test('applyToolkits - symlinks skill folder into claude plugins dir', async () =
     const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
     await mgr.applyToolkits([toolkit]);
     const tkName = path.basename(tmpDir);
-    const expectedLink = path.join(pluginsPath, 'plugins', tkName, 'skills', 'my-skill');
+    const expectedLink = path.join(pluginsPath, tkName, 'skills', 'my-skill');
     assert.ok(fs.existsSync(expectedLink), 'Skill should be linked into plugins dir');
   } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
 });
@@ -250,7 +250,7 @@ test('applyToolkits - registers plugin in installed_plugins.json and enabledPlug
     assert.ok(settings.enabledPlugins?.[pluginKey], 'Plugin should be enabled in settings');
 
     // Check package.json created at plugin root
-    const pluginJson = path.join(pluginsPath, 'plugins', tkName, 'package.json');
+    const pluginJson = path.join(pluginsPath, tkName, 'package.json');
     assert.ok(fs.existsSync(pluginJson), 'package.json should be created at plugin root');
   } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
 });

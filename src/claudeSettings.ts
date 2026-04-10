@@ -154,9 +154,9 @@ export class ClaudeSettingsManager {
       if (skillAssets.length === 0) continue;
 
       const tkName = this.pluginName(toolkit);
-      // Plugins live under pluginsRoot/plugins/<name>/ — mirrors how claude-plugins-official
-      // stores plugins in installLocation/plugins/<name>/.
-      const pluginDir = path.join(pluginsRoot, 'plugins', tkName);
+      // Plugin directory is a direct child of pluginsRoot so that installPath
+      // is a direct child of installLocation — Claude Code validates this relationship.
+      const pluginDir = path.join(pluginsRoot, tkName);
       const skillsDir = path.join(pluginDir, 'skills');
 
       await fs.promises.mkdir(skillsDir, { recursive: true });
@@ -226,7 +226,7 @@ export class ClaudeSettingsManager {
       description: 'Skills and plugins managed by the AI Toolkit VS Code extension',
       version: '1.0.0',
       owner: { name: 'AI Toolkit' },
-      plugins: pluginNames.map(name => ({ name, path: `plugins/${name}` })),
+      plugins: pluginNames.map(name => ({ name, path: name })),
     });
 
     // Register the marketplace in Claude Code's known_marketplaces.json so it
