@@ -8,7 +8,8 @@ const MANAGED_STATE_KEY = 'aiToolkit.claudeManagedEntries';
 interface ClaudeManagedState {
   managedMcpKeys: string[];
   managedHookCommands: string[];
-  managedPluginPaths: string[];
+  managedPluginPaths: string[];  // individual symlink/junction paths inside plugin dirs
+  managedPluginDirs: string[];   // top-level plugin dirs (for cleanup on rename)
   managedPluginKeys: string[];
 }
 
@@ -32,17 +33,20 @@ export class ClaudeSettingsManager {
 
   async applyToolkits(toolkits: Toolkit[]): Promise<void> {
     const enabled = toolkits.filter(t => t.enabled);
-    const oldPluginKeys = this.getManagedState().managedPluginKeys ?? [];
-    const newPluginKeys = await this.applySkillPlugins(enabled);
-    await this.applyHooksAndMcps(enabled, oldPluginKeys, newPluginKeys);
+    const managed = this.getManagedState();
+    // Run both sub-operations before persisting state so that a failure in either
+    // one does not leave managed state partially updated.
+    const pluginState = await this.applySkillPlugins(enabled, managed);
+    const hookState = await this.applyHooksAndMcps(enabled, managed.managedPluginKeys ?? [], pluginState.managedPluginKeys);
+    await this.setManagedState({ ...managed, ...pluginState, ...hookState });
   }
 
-  private async applyHooksAndMcps(toolkits: Toolkit[], oldPluginKeys: string[], newPluginKeys: string[]): Promise<void> {
+  private async applyHooksAndMcps(toolkits: Toolkit[], oldPluginKeys: string[], newPluginKeys: string[]): Promise<Pick<ClaudeManagedState, 'managedHookCommands' | 'managedMcpKeys'>> {
     const settingsPath = expandHomePath(this.getSettingsPath());
     const current = await this.readSettings(settingsPath);
     if (current === null) {
       this.log.appendLine('[AI Toolkit / Claude] Skipping hooks/MCP update — settings.json is malformed');
-      return;
+      return { managedHookCommands: [], managedMcpKeys: [] };
     }
 
     const managed = this.getManagedState();
@@ -94,6 +98,12 @@ export class ClaudeSettingsManager {
           const absCmd = path.isAbsolute(hookContent.command)
             ? hookContent.command
             : path.join(toolkit.rootPath, hookContent.command);
+          // Reject commands that escape the toolkit root — prevents a crafted
+          // hook JSON from executing arbitrary binaries on the user's system.
+          if (!this.isPathWithinRoot(absCmd, toolkit.rootPath)) {
+            this.log.appendLine(`[AI Toolkit / Claude] Skipping hook with command outside toolkit root: ${absCmd}`);
+            continue;
+          }
           if (!current.hooks) current.hooks = {};
           if (!current.hooks[hookContent.event]) current.hooks[hookContent.event] = [];
           const entry: { matcher?: string; hooks: Array<{ type: string; command: string }> } = {
@@ -110,7 +120,14 @@ export class ClaudeSettingsManager {
           const key = `${tkName}__${mcpContent.name}`;
           const resolvedArgs = (mcpContent.args ?? []).map(arg =>
             path.isAbsolute(arg) ? arg : path.resolve(toolkit.rootPath, arg)
-          );
+          ).filter(arg => {
+            // Reject args that escape the toolkit root to prevent path injection.
+            if (!this.isPathWithinRoot(arg, toolkit.rootPath)) {
+              this.log.appendLine(`[AI Toolkit / Claude] Skipping MCP arg outside toolkit root: ${arg}`);
+              return false;
+            }
+            return true;
+          });
           if (!current.mcpServers) current.mcpServers = {};
           current.mcpServers[key] = {
             command: mcpContent.command,
@@ -123,19 +140,19 @@ export class ClaudeSettingsManager {
     }
 
     await this.writeSettings(settingsPath, current);
-    await this.setManagedState({ ...managed, managedHookCommands: newHookCommands, managedMcpKeys: newMcpKeys });
     this.log.appendLine(`[AI Toolkit / Claude] Applied ${newHookCommands.length} hook(s), ${newMcpKeys.length} MCP(s)`);
+    return { managedHookCommands: newHookCommands, managedMcpKeys: newMcpKeys };
   }
 
-  private async applySkillPlugins(toolkits: Toolkit[]): Promise<string[]> {
+  private async applySkillPlugins(toolkits: Toolkit[], managed: ClaudeManagedState): Promise<Pick<ClaudeManagedState, 'managedPluginPaths' | 'managedPluginDirs' | 'managedPluginKeys'>> {
     const pluginsRoot = expandHomePath(this.getPluginsPath());
     const registryDir = expandHomePath(this.getPluginsRegistryPath());
-    const managed = this.getManagedState();
 
-    // Remove previously-managed skill links
-    for (const linkPath of managed.managedPluginPaths) {
+    // Remove previously-managed plugin directories (handles renames — old dir would
+    // otherwise be orphaned since managedPluginPaths only tracks per-link paths).
+    for (const dirPath of managed.managedPluginDirs) {
       try {
-        await fs.promises.rm(linkPath, { recursive: true, force: true });
+        await fs.promises.rm(dirPath, { recursive: true, force: true });
       } catch { /* already gone */ }
     }
 
@@ -145,6 +162,7 @@ export class ClaudeSettingsManager {
     }
 
     const newPluginPaths: string[] = [];
+    const newPluginDirs: string[] = [];
     const newPluginKeys: string[] = [];
 
     for (const toolkit of toolkits) {
@@ -160,6 +178,7 @@ export class ClaudeSettingsManager {
       const skillsDir = path.join(pluginDir, 'skills');
 
       await fs.promises.mkdir(skillsDir, { recursive: true });
+      newPluginDirs.push(pluginDir);
 
       // Claude Code plugin manifest — must be at .claude-plugin/plugin.json (not package.json).
       await this.writeJsonAtomic(
@@ -224,14 +243,8 @@ export class ClaudeSettingsManager {
     // so that disabling all toolkits still writes a valid marketplace.json).
     await this.ensureMarketplaceRegistered(registryDir, pluginsRoot, newPluginKeys);
 
-    await this.setManagedState({
-      ...managed,
-      managedPluginPaths: newPluginPaths,
-      managedPluginKeys: newPluginKeys,
-    });
     this.log.appendLine(`[AI Toolkit / Claude] Registered ${newPluginKeys.length} plugin(s), ${newPluginPaths.length} skill link(s)`);
-
-    return newPluginKeys;
+    return { managedPluginPaths: newPluginPaths, managedPluginDirs: newPluginDirs, managedPluginKeys: newPluginKeys };
   }
 
   private async ensureMarketplaceRegistered(registryDir: string, pluginsRoot: string, pluginKeys: string[]): Promise<void> {
@@ -272,13 +285,15 @@ export class ClaudeSettingsManager {
       }
     }
 
-    if (!marketplaces['ai-toolkit']) {
-      marketplaces['ai-toolkit'] = {
-        source: { source: 'directory', path: pluginsRoot },
-        installLocation: pluginsRoot,
-        lastUpdated: new Date().toISOString(),
-      };
-      await this.writeJsonAtomic(marketplacesPath, marketplaces);
+    // Always overwrite so that installLocation stays in sync if claudePluginsPath changes.
+    const existing = marketplaces['ai-toolkit'] as Record<string, unknown> | undefined;
+    marketplaces['ai-toolkit'] = {
+      source: { source: 'directory', path: pluginsRoot },
+      installLocation: pluginsRoot,
+      lastUpdated: new Date().toISOString(),
+    };
+    await this.writeJsonAtomic(marketplacesPath, marketplaces);
+    if (!existing) {
       this.log.appendLine('[AI Toolkit / Claude] Registered ai-toolkit marketplace');
     }
   }
@@ -327,7 +342,7 @@ export class ClaudeSettingsManager {
 
   private async writeJsonAtomic(filePath: string, data: unknown): Promise<void> {
     await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-    const tmp = `${filePath}.ai-toolkit-tmp`;
+    const tmp = `${filePath}.${process.pid}.ai-toolkit-tmp`;
     await fs.promises.writeFile(tmp, JSON.stringify(data, null, 2), 'utf-8');
     try {
       await fs.promises.rename(tmp, filePath);
@@ -355,12 +370,20 @@ export class ClaudeSettingsManager {
   private async readJson<T>(filePath: string): Promise<T | null> {
     try {
       return JSON.parse(await fs.promises.readFile(filePath, 'utf-8')) as T;
-    } catch { return null; }
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        this.log.appendLine(`[AI Toolkit / Claude] Could not read ${filePath}: ${err}`);
+      }
+      return null;
+    }
   }
 
   private getManagedState(): ClaudeManagedState {
-    return this.context.globalState.get<ClaudeManagedState>(MANAGED_STATE_KEY) ?? {
-      managedMcpKeys: [], managedHookCommands: [], managedPluginPaths: [], managedPluginKeys: [],
+    const state = this.context.globalState.get<ClaudeManagedState>(MANAGED_STATE_KEY);
+    return {
+      managedMcpKeys: [], managedHookCommands: [], managedPluginPaths: [],
+      managedPluginDirs: [], managedPluginKeys: [],
+      ...state,
     };
   }
 
@@ -369,20 +392,37 @@ export class ClaudeSettingsManager {
   }
 
   /**
+   * Returns true when resolvedPath is inside (or equal to) rootPath.
+   * Used to prevent hook commands and MCP args from escaping the toolkit root.
+   */
+  private isPathWithinRoot(resolvedPath: string, rootPath: string): boolean {
+    const norm = (p: string) => path.resolve(p).replace(/\\/g, '/').toLowerCase();
+    const normPath = norm(resolvedPath);
+    const normRoot = norm(rootPath);
+    return normPath === normRoot || normPath.startsWith(normRoot + '/');
+  }
+
+  /**
    * Derives a filesystem-safe, collision-resistant plugin name from the toolkit.
-   * toolkit.id is a tilde-relative path like ~/work/company/my-toolkit.
-   * Stripping the tilde prefix and replacing separators gives "work-company-my-toolkit",
-   * which is unique across toolkits with the same folder name in different parent paths.
+   * Uses toolkit.id (a tilde-relative path like ~/work/company/my-toolkit) so
+   * two toolkits with the same folder name in different parent directories get
+   * distinct plugin names ("work-company-my-toolkit" vs "personal-my-toolkit").
    * Falls back to path.basename when id is not tilde-relative (e.g. in tests).
    */
   private pluginName(toolkit: Toolkit): string {
-    // Use the toolkit's display name, sanitized for filesystem and plugin key use.
-    // toolkit.name is already the folder basename or manifest name — much shorter
-    // and more readable than building a name from the full tilde-relative path.
-    return toolkit.name
+    // Derive a unique, filesystem-safe name from the toolkit's stable ID.
+    // In production toolkit.id is always tilde-relative (~/work/company/my-toolkit)
+    // so stripping ~/ and replacing separators gives "work-company-my-toolkit".
+    // For absolute-path IDs (e.g. in tests) we sanitize the full path for uniqueness.
+    const raw = toolkit.id.startsWith('~/')
+      ? toolkit.id.slice(2)           // strip leading ~/
+      : toolkit.id;                   // absolute path — use full path for uniqueness
+    return raw
       .toLowerCase()
+      .replace(/[\\/]/g, '-')         // path separators → hyphens
+      .replace(/:/g, '')              // strip Windows drive colons (C: → c)
       .replace(/\s+/g, '-')
       .replace(/[^a-z0-9._-]/g, '_')
-      || path.basename(toolkit.rootPath).toLowerCase().replace(/[^a-z0-9._-]/g, '_');
+      || 'toolkit';
   }
 }

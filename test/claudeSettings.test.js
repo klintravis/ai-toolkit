@@ -29,7 +29,11 @@ function makeLog() {
 }
 
 function makeToolkit(rootPath, assets, enabled = true) {
-  return { id: rootPath, name: path.basename(rootPath), rootPath, assets, enabled, format: 'dual-platform' };
+  // Use tilde-relative id so pluginName() produces path.basename(rootPath) —
+  // the same predictable short name that tests already expect.
+  const name = path.basename(rootPath);
+  const id = `~/${name}`;
+  return { id, name, rootPath, assets, enabled, format: 'dual-platform' };
 }
 
 function makeAsset(type, platform, name, sourcePath, isFolder = false) {
@@ -331,5 +335,129 @@ test('applyToolkits - does not remove user-defined enabledPlugins entries', asyn
     await mgr.applyToolkits([]);
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
     assert.ok(settings.enabledPlugins?.['user-plugin@some-marketplace'], 'User-defined enabledPlugins must not be removed');
+  } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
+});
+
+// --- Collision resistance ---
+
+test('applyToolkits - two toolkits with same folder name in different parents get distinct plugin dirs', async () => {
+  const base = path.join(os.tmpdir(), `cs-collision-${Date.now()}`);
+  const dirA = path.join(base, 'workA', 'my-toolkit');
+  const dirB = path.join(base, 'workB', 'my-toolkit');
+  fs.mkdirSync(path.join(dirA, 'skills', 'skill-a'), { recursive: true });
+  fs.writeFileSync(path.join(dirA, 'skills', 'skill-a', 'SKILL.md'), '# a');
+  fs.mkdirSync(path.join(dirB, 'skills', 'skill-b'), { recursive: true });
+  fs.writeFileSync(path.join(dirB, 'skills', 'skill-b', 'SKILL.md'), '# b');
+  const settingsPath = path.join(base, 'settings.json');
+  const pluginsPath = path.join(base, 'plugins');
+  const registryPath = path.join(base, 'registry');
+  try {
+    const skillA = makeAsset(AssetType.Skill, 'claude', 'skill-a', path.join(dirA, 'skills', 'skill-a'), true);
+    const skillB = makeAsset(AssetType.Skill, 'claude', 'skill-b', path.join(dirB, 'skills', 'skill-b'), true);
+    // Use absolute paths as IDs (simulates non-tilde paths in tests)
+    const tkA = { id: dirA, name: 'my-toolkit', rootPath: dirA, assets: [skillA], enabled: true, format: 'dual-platform' };
+    const tkB = { id: dirB, name: 'my-toolkit', rootPath: dirB, assets: [skillB], enabled: true, format: 'dual-platform' };
+    const ctx = makeContext();
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
+    await mgr.applyToolkits([tkA, tkB]);
+    const pluginDirs = fs.readdirSync(pluginsPath).filter(d => !d.startsWith('.'));
+    assert.equal(pluginDirs.length, 2, 'each toolkit must get its own plugin directory');
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+// --- Idempotency ---
+
+test('applyToolkits - applying twice is idempotent (EEXIST handled, paths tracked correctly)', async () => {
+  const tmpDir = makeTempDir('cs-idempotent');
+  const settingsPath = path.join(tmpDir, 'settings.json');
+  const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
+  try {
+    const skillDir = path.join(tmpDir, 'my-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# skill');
+    const toolkit = makeToolkit(tmpDir, [makeAsset(AssetType.Skill, 'claude', 'my-skill', skillDir, true)]);
+    const ctx = makeContext();
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
+
+    await mgr.applyToolkits([toolkit]);
+    await mgr.applyToolkits([toolkit]); // second apply — must not throw
+
+    // Find the actual plugin dir (name is derived from full id, not just basename in tests)
+    const pluginDirs = fs.readdirSync(pluginsPath).filter(d => !d.startsWith('.'));
+    assert.equal(pluginDirs.length, 1, 'should have exactly one plugin dir');
+    const pluginDir = path.join(pluginsPath, pluginDirs[0]);
+    assert.ok(fs.existsSync(path.join(pluginDir, 'skills', 'my-skill')), 'skill link must still exist after second apply');
+
+    // Disabling after double-apply must clean up cleanly
+    toolkit.enabled = false;
+    await mgr.applyToolkits([toolkit]);
+    const remainingDirs = fs.existsSync(pluginsPath)
+      ? fs.readdirSync(pluginsPath).filter(d => !d.startsWith('.'))
+      : [];
+    assert.equal(remainingDirs.length, 0, 'plugin dir should be removed after disable');
+  } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
+});
+
+// --- Corrupt registry resilience ---
+
+test('applyToolkits - corrupt installed_plugins.json does not throw', async () => {
+  const tmpDir = makeTempDir('cs-corrupt-reg');
+  const settingsPath = path.join(tmpDir, 'settings.json');
+  const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
+  try {
+    fs.mkdirSync(registryPath, { recursive: true });
+    fs.writeFileSync(path.join(registryPath, 'installed_plugins.json'), 'CORRUPT {{{{');
+    const skillDir = path.join(tmpDir, 'my-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# skill');
+    const toolkit = makeToolkit(tmpDir, [makeAsset(AssetType.Skill, 'claude', 'my-skill', skillDir, true)]);
+    const ctx = makeContext();
+    const log = makeLog();
+    const mgr = new ClaudeSettingsManager(ctx, log, () => settingsPath, () => pluginsPath, () => registryPath);
+    // Should not throw; logs an error and continues
+    await assert.doesNotReject(() => mgr.applyToolkits([toolkit]));
+    assert.ok(log.lines.some(l => l.includes('installed_plugins')), 'Should log the registry read error');
+  } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
+});
+
+// --- Security ---
+
+test('applyToolkits - hook command outside toolkit root is rejected', async () => {
+  const tmpDir = makeTempDir('cs-hook-escape');
+  const settingsPath = path.join(tmpDir, 'settings.json');
+  const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
+  try {
+    const hookFile = path.join(tmpDir, 'escape.json');
+    // Absolute path that escapes the toolkit root
+    fs.writeFileSync(hookFile, JSON.stringify({ event: 'PreToolUse', command: process.platform === 'win32' ? 'C:\\Windows\\System32\\cmd.exe' : '/usr/bin/env' }));
+    const toolkit = makeToolkit(tmpDir, [makeAsset(AssetType.Hook, 'claude', 'escape', hookFile)]);
+    const ctx = makeContext();
+    const log = makeLog();
+    const mgr = new ClaudeSettingsManager(ctx, log, () => settingsPath, () => pluginsPath, () => registryPath);
+    await mgr.applyToolkits([toolkit]);
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    const hooks = settings.hooks?.PreToolUse ?? [];
+    assert.equal(hooks.length, 0, 'Hook with escaped command must not be written to settings');
+    assert.ok(log.lines.some(l => l.includes('outside toolkit root')), 'Must log rejection reason');
+  } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
+});
+
+test('applyToolkits - hook with missing command field is skipped silently', async () => {
+  const tmpDir = makeTempDir('cs-hook-no-cmd');
+  const settingsPath = path.join(tmpDir, 'settings.json');
+  const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
+  try {
+    const hookFile = path.join(tmpDir, 'no-cmd.json');
+    fs.writeFileSync(hookFile, JSON.stringify({ event: 'PreToolUse' })); // no command field
+    const toolkit = makeToolkit(tmpDir, [makeAsset(AssetType.Hook, 'claude', 'no-cmd', hookFile)]);
+    const ctx = makeContext();
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
+    await mgr.applyToolkits([toolkit]);
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    assert.ok(!settings.hooks, 'No hook should be added when command field is absent');
   } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
 });

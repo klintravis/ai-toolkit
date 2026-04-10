@@ -404,6 +404,7 @@ test('scanPath - sideloads a plain skill folder with no DualPlatform structure',
     const tk = result[0];
     assert.equal(tk.name, path.basename(dir));
     assert.equal(tk.rootPath, dir);
+    assert.equal(tk.format, SourceFormat.Sideloaded);
     assert.equal(tk.assets.length, 1);
     const asset = tk.assets[0];
     assert.equal(asset.type, AssetType.Skill);

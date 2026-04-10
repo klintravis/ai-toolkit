@@ -33,6 +33,8 @@ export const AssetType = {
  */
 export enum SourceFormat {
   DualPlatform = 'dual-platform',
+  /** Standalone folder sideloaded directly (not a structured copilot/claude/shared repo). */
+  Sideloaded = 'sideloaded',
 }
 
 /**

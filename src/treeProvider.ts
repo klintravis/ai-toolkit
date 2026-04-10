@@ -329,7 +329,10 @@ export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
     const grouped = new Map<string, { type: AssetType; assets: Asset[] }>();
     for (const asset of assets) {
       const parts = asset.relativePath.replace(/\\/g, '/').split('/');
-      const folderPath = parts.length >= 2 ? `${parts[0]}/${parts[1]}` : parts[0];
+      // For DualPlatform assets the first two segments are "platform/type" (e.g. "claude/skills").
+      // For sideloaded assets relativePath is just the skill name (one segment) — fall back to
+      // asset.type so they still land in the correct labelled group with the right icon.
+      const folderPath = parts.length >= 2 ? `${parts[0]}/${parts[1]}` : asset.type;
       if (!grouped.has(folderPath)) {
         grouped.set(folderPath, { type: asset.type, assets: [] });
       }

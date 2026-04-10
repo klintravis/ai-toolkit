@@ -120,7 +120,7 @@ export class ToolkitScanner {
         });
       }
       if (assets.length > 0) {
-        return { id, name, rootPath: folderPath, format: SourceFormat.DualPlatform, assets, enabled: enabledToolkits[id] ?? false };
+        return { id, name, rootPath: folderPath, format: SourceFormat.Sideloaded, assets, enabled: enabledToolkits[id] ?? false };
       }
     }
 
@@ -145,7 +145,7 @@ export class ToolkitScanner {
       id,
       name,
       rootPath: folderPath,
-      format: SourceFormat.DualPlatform,
+      format: SourceFormat.Sideloaded,
       assets: [asset],
       enabled: enabledToolkits[id] ?? false,
     };

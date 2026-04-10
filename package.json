@@ -2,7 +2,7 @@
   "name": "ai-toolkit",
   "displayName": "AI Toolkit",
   "description": "Manage AI toolkits from external folders — browse, enable, and configure Copilot and Claude Code assets (agents, instructions, skills, prompts, hooks, MCP servers) across workspaces.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "klintravis",
   "license": "MIT",
   "repository": {
