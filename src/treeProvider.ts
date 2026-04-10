@@ -52,27 +52,34 @@ export interface AssetNode {
   nested: boolean;
 }
 
-const ASSET_TYPE_LABELS: Record<AssetType, string> = {
-  [AssetType.Agent]: 'Agents',
-  [AssetType.Instruction]: 'Instructions',
-  [AssetType.Skill]: 'Skills',
-  [AssetType.Prompt]: 'Prompts',
-  [AssetType.Plugin]: 'Plugins',
-  [AssetType.Hook]: 'Hooks',
-  [AssetType.Workflow]: 'Workflows',
-  [AssetType.Standard]: 'Standards',
-};
+const ASSET_TYPE_LABELS = new Map<string, string>([
+  ['agents', 'Agents'], ['instructions', 'Instructions'], ['skills', 'Skills'],
+  ['prompts', 'Prompts'], ['plugins', 'Plugins'], ['hooks', 'Hooks'],
+  ['workflows', 'Workflows'], ['standards', 'Standards'], ['mcps', 'MCP Servers'], ['docs', 'Docs'],
+]);
 
-const ASSET_TYPE_ICONS: Record<AssetType, string> = {
-  [AssetType.Agent]: 'robot',
-  [AssetType.Instruction]: 'book',
-  [AssetType.Skill]: 'tools',
-  [AssetType.Prompt]: 'comment-discussion',
-  [AssetType.Plugin]: 'extensions',
-  [AssetType.Hook]: 'zap',
-  [AssetType.Workflow]: 'play-circle',
-  [AssetType.Standard]: 'law',
-};
+const ASSET_TYPE_ICONS = new Map<string, string>([
+  ['agents', 'robot'], ['instructions', 'book'], ['skills', 'tools'],
+  ['prompts', 'comment-discussion'], ['plugins', 'extensions'], ['hooks', 'zap'],
+  ['workflows', 'play-circle'], ['standards', 'law'], ['mcps', 'plug'], ['docs', 'file-text'],
+]);
+
+function getAssetTypeLabel(type: string): string {
+  return ASSET_TYPE_LABELS.get(type) ?? (type.charAt(0).toUpperCase() + type.slice(1));
+}
+
+function getAssetTypeIcon(type: string): string {
+  return ASSET_TYPE_ICONS.get(type) ?? 'file';
+}
+
+function getPlatformBadge(platform: string | undefined): string {
+  switch (platform) {
+    case 'both': return '[Both]';
+    case 'claude': return '[Claude]';
+    case 'shared': return '[Shared]';
+    default: return '';
+  }
+}
 
 export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, vscode.Disposable {
   private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | void>();
@@ -121,7 +128,7 @@ export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
         return Array.from(grouped.entries()).map(([type, assets]) => ({
           kind: 'assetType' as const,
           type,
-          label: ASSET_TYPE_LABELS[type],
+          label: getAssetTypeLabel(type),
           assets,
           toolkit: element.toolkit,
           toolkitEnabled: element.toolkit.enabled,
@@ -214,7 +221,16 @@ export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
     // Description: clean status line with unicode indicators.
     const parts: string[] = [];
     parts.push(tk.enabled ? '● on' : '○ off');
-    parts.push(`${tk.assets.length}`);
+    const copilotN = tk.assets.filter(a => a.platform === 'copilot').length;
+    const claudeN = tk.assets.filter(a => a.platform === 'claude').length;
+    const bothN = tk.assets.filter(a => a.platform === 'both').length;
+    const sharedN = tk.assets.filter(a => a.platform === 'shared').length;
+    const platformParts: string[] = [];
+    if (copilotN > 0) { platformParts.push(`Copilot:${copilotN}`); }
+    if (claudeN > 0) { platformParts.push(`Claude:${claudeN}`); }
+    if (bothN > 0) { platformParts.push(`Both:${bothN}`); }
+    if (sharedN > 0) { platformParts.push(`Shared:${sharedN}`); }
+    parts.push(platformParts.length > 0 ? platformParts.join(' | ') : `${tk.assets.length}`);
     if (tk.update?.updateAvailable) { parts.push(`🔔 ${tk.update.behindCount ?? ''}`.trim()); }
     item.description = parts.join(' · ');
 
@@ -250,7 +266,7 @@ export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 
   private getAssetTypeItem(node: AssetTypeNode): vscode.TreeItem {
     const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.Collapsed);
-    item.iconPath = new vscode.ThemeIcon(ASSET_TYPE_ICONS[node.type]);
+    item.iconPath = new vscode.ThemeIcon(getAssetTypeIcon(node.type));
     item.description = `${node.assets.length}`;
     return item;
   }
@@ -281,9 +297,11 @@ export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
       };
     }
 
+    const badge = !node.nested ? getPlatformBadge(asset.platform) : '';
     const descParts: string[] = [];
     if (hasChildren) { descParts.push(`${asset.children!.length}`); }
     if (isPinned) { descParts.push(`📌 ${pinRecord!.groupName}`); }
+    if (badge) { descParts.push(badge); }
     if (descParts.length > 0) { item.description = descParts.join(' · '); }
 
     if (isPinned) {
