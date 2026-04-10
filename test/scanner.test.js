@@ -436,6 +436,45 @@ test('scanPath - empty folder does not sideload', async () => {
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('scanPath - sideloads individual skills from skills/ subdirectory', async () => {
+  const scanner = new ToolkitScanner();
+  const dir = makeTempDir('sideload-skills-subdir');
+  try {
+    fs.mkdirSync(path.join(dir, 'skills', 'brainstorming'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'skills', 'brainstorming', 'SKILL.md'), '# Brainstorming');
+    fs.mkdirSync(path.join(dir, 'skills', 'writing-plans'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'skills', 'writing-plans', 'SKILL.md'), '# Writing Plans');
+    fs.writeFileSync(path.join(dir, 'README.md'), '# toolkit');
+
+    const result = await scanner.scanPath(dir, {});
+    assert.equal(result.length, 1, 'should produce one synthetic toolkit');
+    const tk = result[0];
+    assert.equal(tk.assets.length, 2, 'one asset per skill directory');
+    const names = tk.assets.map(a => a.name).sort();
+    assert.deepEqual(names, ['Brainstorming', 'Writing Plans']);
+    for (const asset of tk.assets) {
+      assert.equal(asset.type, AssetType.Skill);
+      assert.equal(asset.platform, 'claude');
+      assert.equal(asset.isFolder, true);
+      // sourcePath must point to the individual skill dir, not the toolkit root
+      assert.ok(asset.sourcePath.endsWith('brainstorming') || asset.sourcePath.endsWith('writing-plans'));
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('scanPath - sideload with empty skills/ subdirectory falls back to whole-folder skill', async () => {
+  const scanner = new ToolkitScanner();
+  const dir = makeTempDir('sideload-empty-skills');
+  try {
+    fs.mkdirSync(path.join(dir, 'skills'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'SKILL.md'), '# root skill');
+    const result = await scanner.scanPath(dir, {});
+    assert.equal(result.length, 1);
+    assert.equal(result[0].assets.length, 1);
+    assert.equal(result[0].assets[0].sourcePath, dir, 'falls back to whole-folder skill');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 // --- DEFAULT_ASSET_MAPPINGS export ---
 
 test('DEFAULT_ASSET_MAPPINGS is exported and has expected entries', () => {

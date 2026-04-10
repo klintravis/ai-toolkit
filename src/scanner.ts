@@ -65,16 +65,17 @@ export class ToolkitScanner {
   }
 
   /**
-   * Sideload a standalone skill folder.
+   * Sideload a standalone folder as a Claude Code plugin.
    *
    * When a user adds a path that isn't a full DualPlatform toolkit repo, the
-   * extension treats the folder itself as a single Claude Code skill. This lets
-   * teams add individual plugin folders (e.g. a local `the-sauce/` dev folder)
-   * without restructuring around copilot/claude/shared subfolders.
+   * extension tries to extract skills from it directly. Two cases:
    *
-   * The resulting synthetic toolkit has one asset: the folder itself, typed as
-   * a skill with platform 'claude'. It is registered with Claude Code's plugin
-   * system identically to a skill discovered inside a full toolkit.
+   * 1. The folder has a `skills/` subdirectory (e.g. a native Claude Code plugin
+   *    or an awesome-copilot–style repo). Each subdirectory of `skills/` becomes
+   *    an individual skill asset so Claude Code receives proper per-skill symlinks.
+   *
+   * 2. The folder itself is a single skill (no `skills/` subdir). The folder is
+   *    registered as one skill asset, identical to previous behaviour.
    */
   private async scanAsSideloadedSkill(
     folderPath: string,
@@ -94,6 +95,36 @@ export class ToolkitScanner {
       realRoot = folderPath.replace(/\\/g, '/').toLowerCase();
     }
 
+    // Case 1: folder contains a skills/ subdirectory — enumerate individual skills.
+    const skillsSubdir = path.join(folderPath, 'skills');
+    if (await isDirectory(skillsSubdir)) {
+      const skillEntries = await this.readDirSafe(skillsSubdir);
+      const assets: Asset[] = [];
+      for (const entry of skillEntries) {
+        if (entry.name.startsWith('.') || !entry.isDirectory()) continue;
+        const skillPath = path.join(skillsSubdir, entry.name);
+        const assetId = `${id}::${entry.name}`;
+        const children = await this.scanFolderContents(
+          skillPath, AssetType.Skill, 'claude', assetId, entry.name,
+          MAX_SCAN_DEPTH - 1, realRoot, new Set(),
+        );
+        assets.push({
+          id: assetId,
+          name: this.deriveDisplayName(entry.name),
+          type: AssetType.Skill,
+          sourcePath: skillPath,
+          relativePath: entry.name,
+          isFolder: true,
+          platform: 'claude',
+          children,
+        });
+      }
+      if (assets.length > 0) {
+        return { id, name, rootPath: folderPath, format: SourceFormat.DualPlatform, assets, enabled: enabledToolkits[id] ?? false };
+      }
+    }
+
+    // Case 2: treat the folder itself as a single skill.
     const children = await this.scanFolderContents(
       folderPath, AssetType.Skill, 'claude', `${id}::${name}`, name,
       MAX_SCAN_DEPTH - 1, realRoot, new Set(),
