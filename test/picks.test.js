@@ -32,6 +32,7 @@ function buildAsset(overrides) {
     sourcePath: '/tmp/a.agent.md',
     relativePath: 'agents/a.agent.md',
     isFolder: false,
+    platform: 'copilot',
     ...overrides,
   };
 }

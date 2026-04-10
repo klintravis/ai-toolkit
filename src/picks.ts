@@ -181,6 +181,7 @@ export class PinManager {
       targetPath,
       linkType,
       isFolder: asset.isFolder,
+      platform: asset.platform,
       pinnedAt: new Date().toISOString(),
     };
     await this.store.add(record);
