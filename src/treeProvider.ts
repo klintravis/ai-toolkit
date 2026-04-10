@@ -38,6 +38,8 @@ export interface ToolkitNode {
 export interface AssetTypeNode {
   kind: 'assetType';
   type: AssetType;
+  /** First two path segments of the assets' relativePath, e.g. 'claude/hooks'. Used as the stable group key. */
+  folderPath: string;
   label: string;
   assets: Asset[];
   toolkit: Toolkit;
@@ -124,15 +126,20 @@ export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
       case 'section':
         return element.toolkits.map(toolkit => ({ kind: 'toolkit' as const, toolkit }));
       case 'toolkit': {
-        const grouped = this.groupByType(element.toolkit.assets);
-        return Array.from(grouped.entries()).map(([type, assets]) => ({
-          kind: 'assetType' as const,
-          type,
-          label: getAssetTypeLabel(type),
-          assets,
-          toolkit: element.toolkit,
-          toolkitEnabled: element.toolkit.enabled,
-        }));
+        const grouped = this.groupByFolder(element.toolkit.assets);
+        return Array.from(grouped.entries()).map(([folderPath, { type, assets }]) => {
+          const badge = getPlatformBadge(assets[0]?.platform);
+          const label = badge ? `${getAssetTypeLabel(type)} ${badge}` : getAssetTypeLabel(type);
+          return {
+            kind: 'assetType' as const,
+            type,
+            folderPath,
+            label,
+            assets,
+            toolkit: element.toolkit,
+            toolkitEnabled: element.toolkit.enabled,
+          };
+        });
       }
       case 'assetType':
         return element.assets.map(asset => ({
@@ -313,12 +320,20 @@ export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
     return item;
   }
 
-  private groupByType(assets: Asset[]): Map<AssetType, Asset[]> {
-    const grouped = new Map<AssetType, Asset[]>();
+  /**
+   * Groups assets by their source folder (first two path segments of relativePath).
+   * This keeps copilot/hooks and claude/hooks as separate groups even though
+   * they share the same asset type string ('hooks').
+   */
+  private groupByFolder(assets: Asset[]): Map<string, { type: AssetType; assets: Asset[] }> {
+    const grouped = new Map<string, { type: AssetType; assets: Asset[] }>();
     for (const asset of assets) {
-      const existing = grouped.get(asset.type) ?? [];
-      existing.push(asset);
-      grouped.set(asset.type, existing);
+      const parts = asset.relativePath.replace(/\\/g, '/').split('/');
+      const folderPath = parts.length >= 2 ? `${parts[0]}/${parts[1]}` : parts[0];
+      if (!grouped.has(folderPath)) {
+        grouped.set(folderPath, { type: asset.type, assets: [] });
+      }
+      grouped.get(folderPath)!.assets.push(asset);
     }
     return grouped;
   }
