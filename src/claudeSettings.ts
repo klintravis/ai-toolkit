@@ -68,7 +68,7 @@ export class ClaudeSettingsManager {
       const tkName = path.basename(toolkit.rootPath);
 
       for (const asset of toolkit.assets) {
-        if (asset.type === AssetType.Hook && asset.platform === 'claude' && !asset.isFolder) {
+        if (asset.type === AssetType.Hook && (asset.platform === 'claude' || asset.platform === 'both') && !asset.isFolder) {
           const hookContent = await this.readJson<HookFile>(asset.sourcePath);
           if (!hookContent?.event || !hookContent?.command) continue;
           const absCmd = path.isAbsolute(hookContent.command)
@@ -84,12 +84,12 @@ export class ClaudeSettingsManager {
           newHookCommands.push(absCmd);
         }
 
-        if (asset.type === AssetType.McpServer && asset.platform === 'claude' && !asset.isFolder) {
+        if (asset.type === AssetType.McpServer && (asset.platform === 'claude' || asset.platform === 'both') && !asset.isFolder) {
           const mcpContent = await this.readJson<McpFile>(asset.sourcePath);
           if (!mcpContent?.name || !mcpContent?.command) continue;
           const key = `${tkName}__${mcpContent.name}`;
           const resolvedArgs = (mcpContent.args ?? []).map(arg =>
-            arg.startsWith('.') ? path.resolve(toolkit.rootPath, arg) : arg
+            path.isAbsolute(arg) ? arg : path.resolve(toolkit.rootPath, arg)
           );
           if (!current.mcpServers) current.mcpServers = {};
           current.mcpServers[key] = {
@@ -111,12 +111,9 @@ export class ClaudeSettingsManager {
     const pluginsRoot = expandHomePath(this.getPluginsPath());
     const managed = this.getManagedState();
 
-    for (const pluginPath of managed.managedPluginPaths) {
+    for (const linkPath of managed.managedPluginPaths) {
       try {
-        const stat = await fs.promises.lstat(pluginPath);
-        if (stat.isSymbolicLink() || stat.isDirectory()) {
-          await fs.promises.rm(pluginPath, { recursive: true, force: true });
-        }
+        await fs.promises.rm(linkPath, { recursive: true, force: true });
       } catch { /* already gone */ }
     }
 
@@ -137,17 +134,19 @@ export class ClaudeSettingsManager {
         const linkPath = path.join(skillsDir, path.basename(skillAsset.sourcePath));
         try {
           await fs.promises.symlink(skillAsset.sourcePath, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
+          newPluginPaths.push(linkPath);  // track the individual link
         } catch (err: unknown) {
           if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
             this.log.appendLine(`[AI Toolkit / Claude] Could not link skill ${skillAsset.name}: ${err}`);
+          } else {
+            newPluginPaths.push(linkPath);  // already exists, still track it
           }
         }
       }
-      newPluginPaths.push(pluginDir);
     }
 
     await this.setManagedState({ ...managed, managedPluginPaths: newPluginPaths });
-    this.log.appendLine(`[AI Toolkit / Claude] Materialized ${newPluginPaths.length} skill plugin dir(s)`);
+    this.log.appendLine(`[AI Toolkit / Claude] Materialized ${newPluginPaths.length} skill link(s)`);
   }
 
   private async readSettings(settingsPath: string): Promise<ClaudeSettings | null> {
@@ -165,7 +164,12 @@ export class ClaudeSettingsManager {
     await fs.promises.mkdir(path.dirname(settingsPath), { recursive: true });
     const tmp = `${settingsPath}.ai-toolkit-tmp`;
     await fs.promises.writeFile(tmp, JSON.stringify(settings, null, 2), 'utf-8');
-    await fs.promises.rename(tmp, settingsPath);
+    try {
+      await fs.promises.rename(tmp, settingsPath);
+    } catch (err) {
+      await fs.promises.unlink(tmp).catch(() => undefined);
+      throw err;
+    }
   }
 
   private async readJson<T>(filePath: string): Promise<T | null> {
