@@ -221,12 +221,16 @@ export class ClaudeSettingsManager {
     // how claude-plugins-official stores plugins under its installLocation/plugins/ dir.
     const pluginNames = pluginKeys.map(k => k.replace(/@ai-toolkit$/, ''));
     await this.writeJsonAtomic(marketplaceJsonPath, {
-      id: 'ai-toolkit',
+      $schema: 'https://anthropic.com/claude-code/marketplace.schema.json',
       name: 'ai-toolkit',
       description: 'Skills and plugins managed by the AI Toolkit VS Code extension',
-      version: '1.0.0',
       owner: { name: 'AI Toolkit' },
-      plugins: pluginNames.map(name => ({ name, path: name })),
+      // source is a relative path from the marketplace root to each plugin directory.
+      plugins: pluginNames.map(name => ({
+        name,
+        description: `Managed by AI Toolkit`,
+        source: `./${name}`,
+      })),
     });
 
     // Register the marketplace in Claude Code's known_marketplaces.json so it
