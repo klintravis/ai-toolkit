@@ -365,6 +365,11 @@
           "type": "string",
           "default": "~/.ai-toolkits/claude-plugins",
           "description": "Directory where AI Toolkit materializes Claude skill plugin folders. One subfolder per enabled toolkit."
+        },
+        "aiToolkit.claudePluginsRegistryPath": {
+          "type": "string",
+          "default": "~/.claude/plugins",
+          "description": "Path to Claude Code's plugins registry directory (contains known_marketplaces.json and installed_plugins.json)."
         }
       }
     }

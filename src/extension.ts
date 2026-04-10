@@ -39,6 +39,7 @@ export function activate(context: vscode.ExtensionContext): void {
     outputChannel,
     () => vscode.workspace.getConfiguration('aiToolkit').get<string>('claudeSettingsPath', '~/.claude/settings.json'),
     () => vscode.workspace.getConfiguration('aiToolkit').get<string>('claudePluginsPath', '~/.ai-toolkits/claude-plugins'),
+    () => vscode.workspace.getConfiguration('aiToolkit').get<string>('claudePluginsRegistryPath', '~/.claude/plugins'),
   );
   treeProvider = new ToolkitTreeProvider();
   gitManager = new GitToolkitManager(outputChannel);

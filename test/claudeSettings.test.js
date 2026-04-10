@@ -42,9 +42,10 @@ test('applyToolkits - creates settings.json when missing', async () => {
   const tmpDir = makeTempDir('cs-create');
   const settingsPath = path.join(tmpDir, '.claude', 'settings.json');
   const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
   try {
     const ctx = makeContext();
-    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath);
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
     await mgr.applyToolkits([]);
     assert.ok(fs.existsSync(settingsPath), 'settings.json should be created');
     const content = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
@@ -56,11 +57,12 @@ test('applyToolkits - aborts on malformed JSON, does not overwrite', async () =>
   const tmpDir = makeTempDir('cs-malformed');
   const settingsPath = path.join(tmpDir, 'settings.json');
   const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
   try {
     fs.writeFileSync(settingsPath, 'NOT JSON {{{{');
     const log = makeLog();
     const ctx = makeContext();
-    const mgr = new ClaudeSettingsManager(ctx, log, () => settingsPath, () => pluginsPath);
+    const mgr = new ClaudeSettingsManager(ctx, log, () => settingsPath, () => pluginsPath, () => registryPath);
     await mgr.applyToolkits([]);
     assert.equal(fs.readFileSync(settingsPath, 'utf-8'), 'NOT JSON {{{{', 'Malformed file must not be overwritten');
     assert.ok(log.lines.some(l => l.includes('malformed')), 'Should log malformed error');
@@ -73,12 +75,13 @@ test('applyToolkits - merges MCP entries into settings.json', async () => {
   const tmpDir = makeTempDir('cs-mcp');
   const settingsPath = path.join(tmpDir, 'settings.json');
   const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
   try {
     const mcpFile = path.join(tmpDir, 'server.json');
     fs.writeFileSync(mcpFile, JSON.stringify({ name: 'my-server', command: 'node', args: ['./index.js'] }));
     const toolkit = makeToolkit(tmpDir, [makeAsset(AssetType.McpServer, 'claude', 'my-server', mcpFile)]);
     const ctx = makeContext();
-    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath);
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
     await mgr.applyToolkits([toolkit]);
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
     const key = `${path.basename(tmpDir)}__my-server`;
@@ -91,12 +94,13 @@ test('applyToolkits - removes managed MCPs when toolkit disabled', async () => {
   const tmpDir = makeTempDir('cs-mcp-remove');
   const settingsPath = path.join(tmpDir, 'settings.json');
   const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
   try {
     const mcpFile = path.join(tmpDir, 'server.json');
     fs.writeFileSync(mcpFile, JSON.stringify({ name: 'my-server', command: 'node', args: [] }));
     const toolkit = makeToolkit(tmpDir, [makeAsset(AssetType.McpServer, 'claude', 'my-server', mcpFile)]);
     const ctx = makeContext();
-    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath);
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
 
     // Enable — add MCP
     await mgr.applyToolkits([toolkit]);
@@ -116,10 +120,11 @@ test('applyToolkits - does not remove user-defined MCPs', async () => {
   const tmpDir = makeTempDir('cs-mcp-user');
   const settingsPath = path.join(tmpDir, 'settings.json');
   const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
   try {
     fs.writeFileSync(settingsPath, JSON.stringify({ mcpServers: { 'user-server': { command: 'node', args: [] } } }));
     const ctx = makeContext();
-    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath);
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
     await mgr.applyToolkits([]);
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
     assert.ok(settings.mcpServers?.['user-server'], 'User-defined MCP must not be removed');
@@ -132,6 +137,7 @@ test('applyToolkits - merges hook entries into settings.json', async () => {
   const tmpDir = makeTempDir('cs-hook');
   const settingsPath = path.join(tmpDir, 'settings.json');
   const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
   try {
     const hookFile = path.join(tmpDir, 'lint.json');
     const hookScript = path.join(tmpDir, 'lint.sh');
@@ -139,7 +145,7 @@ test('applyToolkits - merges hook entries into settings.json', async () => {
     fs.writeFileSync(hookFile, JSON.stringify({ event: 'PreToolUse', matcher: 'Bash', command: hookScript }));
     const toolkit = makeToolkit(tmpDir, [makeAsset(AssetType.Hook, 'claude', 'lint', hookFile)]);
     const ctx = makeContext();
-    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath);
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
     await mgr.applyToolkits([toolkit]);
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
     assert.ok(settings.hooks?.PreToolUse, 'PreToolUse hook group should be added');
@@ -151,6 +157,7 @@ test('applyToolkits - removes managed hooks when toolkit disabled', async () => 
   const tmpDir = makeTempDir('cs-hook-remove');
   const settingsPath = path.join(tmpDir, 'settings.json');
   const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
   try {
     const hookFile = path.join(tmpDir, 'lint.json');
     const hookScript = path.join(tmpDir, 'lint.sh');
@@ -158,7 +165,7 @@ test('applyToolkits - removes managed hooks when toolkit disabled', async () => 
     fs.writeFileSync(hookFile, JSON.stringify({ event: 'PreToolUse', command: hookScript }));
     const toolkit = makeToolkit(tmpDir, [makeAsset(AssetType.Hook, 'claude', 'lint', hookFile)]);
     const ctx = makeContext();
-    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath);
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
 
     await mgr.applyToolkits([toolkit]);
     toolkit.enabled = false;
@@ -177,13 +184,14 @@ test('applyToolkits - symlinks skill folder into claude plugins dir', async () =
   const tmpDir = makeTempDir('cs-skill');
   const settingsPath = path.join(tmpDir, 'settings.json');
   const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
   try {
     const skillDir = path.join(tmpDir, 'my-skill');
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# skill');
     const toolkit = makeToolkit(tmpDir, [makeAsset(AssetType.Skill, 'both', 'my-skill', skillDir, true)]);
     const ctx = makeContext();
-    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath);
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
     await mgr.applyToolkits([toolkit]);
     const tkName = path.basename(tmpDir);
     const expectedLink = path.join(pluginsPath, tkName, 'skills', 'my-skill');
@@ -197,16 +205,82 @@ test('applyToolkits - resolves relative args in MCP entry', async () => {
   const tmpDir = makeTempDir('cs-mcp-relpath');
   const settingsPath = path.join(tmpDir, 'settings.json');
   const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
   try {
     const mcpFile = path.join(tmpDir, 'server.json');
     fs.writeFileSync(mcpFile, JSON.stringify({ name: 'srv', command: 'node', args: ['./index.js'] }));
     const toolkit = makeToolkit(tmpDir, [makeAsset(AssetType.McpServer, 'claude', 'srv', mcpFile)]);
     const ctx = makeContext();
-    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath);
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
     await mgr.applyToolkits([toolkit]);
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
     const key = `${path.basename(tmpDir)}__srv`;
     const args = settings.mcpServers?.[key]?.args ?? [];
     assert.ok(path.isAbsolute(args[0]), 'Relative args should be resolved to absolute paths');
+  } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
+});
+
+// --- Plugin registration ---
+
+test('applyToolkits - registers plugin in installed_plugins.json and enabledPlugins', async () => {
+  const tmpDir = makeTempDir('cs-plugin-reg');
+  const settingsPath = path.join(tmpDir, 'settings.json');
+  const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
+  try {
+    const skillDir = path.join(tmpDir, 'my-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# skill');
+    const toolkit = makeToolkit(tmpDir, [makeAsset(AssetType.Skill, 'both', 'my-skill', skillDir, true)]);
+    const ctx = makeContext();
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
+    await mgr.applyToolkits([toolkit]);
+
+    // Check installed_plugins.json
+    const installedPath = path.join(registryPath, 'installed_plugins.json');
+    assert.ok(fs.existsSync(installedPath), 'installed_plugins.json should be created');
+    const installed = JSON.parse(fs.readFileSync(installedPath, 'utf-8'));
+    const tkName = path.basename(tmpDir);
+    const pluginKey = `${tkName}@ai-toolkit`;
+    assert.ok(installed.plugins?.[pluginKey], 'Plugin should be registered');
+    assert.equal(installed.plugins[pluginKey][0].scope, 'user');
+
+    // Check enabledPlugins in settings.json
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    assert.ok(settings.enabledPlugins?.[pluginKey], 'Plugin should be enabled in settings');
+
+    // Check .claude-plugin/plugin.json created
+    const pluginJson = path.join(pluginsPath, tkName, '.claude-plugin', 'plugin.json');
+    assert.ok(fs.existsSync(pluginJson), '.claude-plugin/plugin.json should be created');
+  } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
+});
+
+test('applyToolkits - removes plugin registration when toolkit disabled', async () => {
+  const tmpDir = makeTempDir('cs-plugin-remove');
+  const settingsPath = path.join(tmpDir, 'settings.json');
+  const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
+  try {
+    const skillDir = path.join(tmpDir, 'my-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# skill');
+    const toolkit = makeToolkit(tmpDir, [makeAsset(AssetType.Skill, 'both', 'my-skill', skillDir, true)]);
+    const ctx = makeContext();
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
+
+    // Enable
+    await mgr.applyToolkits([toolkit]);
+    const tkName = path.basename(tmpDir);
+    const pluginKey = `${tkName}@ai-toolkit`;
+
+    // Disable
+    toolkit.enabled = false;
+    await mgr.applyToolkits([toolkit]);
+
+    const installed = JSON.parse(fs.readFileSync(path.join(registryPath, 'installed_plugins.json'), 'utf-8'));
+    assert.ok(!installed.plugins?.[pluginKey], 'Plugin should be removed from installed_plugins.json');
+
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    assert.ok(!settings.enabledPlugins?.[pluginKey], 'Plugin should be removed from enabledPlugins');
   } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
 });

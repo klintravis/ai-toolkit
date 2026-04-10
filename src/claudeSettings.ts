@@ -9,6 +9,7 @@ interface ClaudeManagedState {
   managedMcpKeys: string[];
   managedHookCommands: string[];
   managedPluginPaths: string[];
+  managedPluginKeys: string[];
 }
 
 interface ClaudeSettings {
@@ -26,15 +27,17 @@ export class ClaudeSettingsManager {
     private log: OutputLog,
     private getSettingsPath: () => string,
     private getPluginsPath: () => string,
+    private getPluginsRegistryPath: () => string,
   ) {}
 
   async applyToolkits(toolkits: Toolkit[]): Promise<void> {
     const enabled = toolkits.filter(t => t.enabled);
-    await this.applyHooksAndMcps(enabled);
-    await this.applySkillPlugins(enabled);
+    const oldPluginKeys = this.getManagedState().managedPluginKeys ?? [];
+    const newPluginKeys = await this.applySkillPlugins(enabled);
+    await this.applyHooksAndMcps(enabled, oldPluginKeys, newPluginKeys);
   }
 
-  private async applyHooksAndMcps(toolkits: Toolkit[]): Promise<void> {
+  private async applyHooksAndMcps(toolkits: Toolkit[], oldPluginKeys: string[], newPluginKeys: string[]): Promise<void> {
     const settingsPath = expandHomePath(this.getSettingsPath());
     const current = await this.readSettings(settingsPath);
     if (current === null) return;
@@ -59,6 +62,23 @@ export class ClaudeSettingsManager {
     }
     if (current.mcpServers && Object.keys(current.mcpServers).length === 0) {
       delete current.mcpServers;
+    }
+
+    // Manage enabledPlugins: remove old managed plugin keys, add new ones
+    if (!current.enabledPlugins || typeof current.enabledPlugins !== 'object') {
+      current.enabledPlugins = {};
+    }
+    const enabledPlugins = current.enabledPlugins as Record<string, boolean>;
+    for (const key of oldPluginKeys) {
+      delete enabledPlugins[key];
+    }
+    for (const key of newPluginKeys) {
+      enabledPlugins[key] = true;
+    }
+    if (Object.keys(enabledPlugins).length === 0) {
+      delete current.enabledPlugins;
+    } else {
+      current.enabledPlugins = enabledPlugins;
     }
 
     const newHookCommands: string[] = [];
@@ -107,17 +127,25 @@ export class ClaudeSettingsManager {
     this.log.appendLine(`[AI Toolkit / Claude] Applied ${newHookCommands.length} hook(s), ${newMcpKeys.length} MCP(s)`);
   }
 
-  private async applySkillPlugins(toolkits: Toolkit[]): Promise<void> {
+  private async applySkillPlugins(toolkits: Toolkit[]): Promise<string[]> {
     const pluginsRoot = expandHomePath(this.getPluginsPath());
+    const registryDir = expandHomePath(this.getPluginsRegistryPath());
     const managed = this.getManagedState();
 
+    // Remove previously-managed skill links
     for (const linkPath of managed.managedPluginPaths) {
       try {
         await fs.promises.rm(linkPath, { recursive: true, force: true });
       } catch { /* already gone */ }
     }
 
+    // Remove previously-managed plugin registrations
+    if ((managed.managedPluginKeys ?? []).length > 0) {
+      await this.removeFromInstalledPlugins(managed.managedPluginKeys, registryDir);
+    }
+
     const newPluginPaths: string[] = [];
+    const newPluginKeys: string[] = [];
 
     for (const toolkit of toolkits) {
       const skillAssets = toolkit.assets.filter(
@@ -128,25 +156,139 @@ export class ClaudeSettingsManager {
       const tkName = path.basename(toolkit.rootPath);
       const pluginDir = path.join(pluginsRoot, tkName);
       const skillsDir = path.join(pluginDir, 'skills');
-      await fs.promises.mkdir(skillsDir, { recursive: true });
+      const claudePluginMetaDir = path.join(pluginDir, '.claude-plugin');
 
+      await fs.promises.mkdir(skillsDir, { recursive: true });
+      await fs.promises.mkdir(claudePluginMetaDir, { recursive: true });
+
+      // Write .claude-plugin/plugin.json
+      await fs.promises.writeFile(
+        path.join(claudePluginMetaDir, 'plugin.json'),
+        JSON.stringify({
+          name: tkName,
+          description: `AI Toolkit managed: ${toolkit.name}`,
+          version: 'managed',
+          author: { name: 'ai-toolkit' },
+          keywords: ['skills', 'ai-toolkit'],
+        }, null, 2),
+        'utf-8'
+      );
+
+      // Symlink each skill
       for (const skillAsset of skillAssets) {
         const linkPath = path.join(skillsDir, path.basename(skillAsset.sourcePath));
         try {
-          await fs.promises.symlink(skillAsset.sourcePath, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
-          newPluginPaths.push(linkPath);  // track the individual link
+          await fs.promises.symlink(
+            skillAsset.sourcePath, linkPath,
+            process.platform === 'win32' ? 'junction' : 'dir'
+          );
+          newPluginPaths.push(linkPath);
         } catch (err: unknown) {
           if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
             this.log.appendLine(`[AI Toolkit / Claude] Could not link skill ${skillAsset.name}: ${err}`);
           } else {
-            newPluginPaths.push(linkPath);  // already exists, still track it
+            newPluginPaths.push(linkPath);
           }
         }
       }
+
+      // Register in installed_plugins.json
+      const pluginKey = `${tkName}@ai-toolkit`;
+      await this.registerInInstalledPlugins(pluginKey, pluginDir, registryDir);
+      newPluginKeys.push(pluginKey);
     }
 
-    await this.setManagedState({ ...managed, managedPluginPaths: newPluginPaths });
-    this.log.appendLine(`[AI Toolkit / Claude] Materialized ${newPluginPaths.length} skill link(s)`);
+    // Ensure ai-toolkit marketplace is registered
+    if (newPluginKeys.length > 0) {
+      await this.ensureMarketplaceRegistered(registryDir, pluginsRoot);
+    }
+
+    await this.setManagedState({
+      ...managed,
+      managedPluginPaths: newPluginPaths,
+      managedPluginKeys: newPluginKeys,
+    });
+    this.log.appendLine(`[AI Toolkit / Claude] Registered ${newPluginKeys.length} plugin(s), ${newPluginPaths.length} skill link(s)`);
+
+    return newPluginKeys;
+  }
+
+  private async ensureMarketplaceRegistered(registryDir: string, pluginsRoot: string): Promise<void> {
+    const marketplacesPath = path.join(registryDir, 'known_marketplaces.json');
+    let marketplaces: Record<string, unknown> = {};
+    try {
+      const content = await fs.promises.readFile(marketplacesPath, 'utf-8');
+      marketplaces = JSON.parse(content);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        this.log.appendLine(`[AI Toolkit / Claude] Could not read known_marketplaces.json: ${err}`);
+        return;
+      }
+    }
+
+    if (!marketplaces['ai-toolkit']) {
+      marketplaces['ai-toolkit'] = {
+        source: { source: 'directory', path: pluginsRoot },
+        installLocation: pluginsRoot,
+        lastUpdated: new Date().toISOString(),
+      };
+      await this.writeJsonAtomic(marketplacesPath, marketplaces);
+      this.log.appendLine('[AI Toolkit / Claude] Registered ai-toolkit marketplace');
+    }
+  }
+
+  private async registerInInstalledPlugins(pluginKey: string, installPath: string, registryDir: string): Promise<void> {
+    const installedPath = path.join(registryDir, 'installed_plugins.json');
+    let registry: { version: number; plugins: Record<string, unknown[]> } = { version: 2, plugins: {} };
+    try {
+      const content = await fs.promises.readFile(installedPath, 'utf-8');
+      registry = JSON.parse(content);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        this.log.appendLine(`[AI Toolkit / Claude] Could not read installed_plugins.json: ${err}`);
+        return;
+      }
+    }
+
+    if (!registry.plugins) registry.plugins = {};
+    registry.plugins[pluginKey] = [{
+      scope: 'user',
+      installPath,
+      version: 'managed',
+      installedAt: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
+    }];
+
+    await this.writeJsonAtomic(installedPath, registry);
+  }
+
+  private async removeFromInstalledPlugins(pluginKeys: string[], registryDir: string): Promise<void> {
+    if (pluginKeys.length === 0) return;
+    const installedPath = path.join(registryDir, 'installed_plugins.json');
+    try {
+      const content = await fs.promises.readFile(installedPath, 'utf-8');
+      const registry = JSON.parse(content) as { version: number; plugins: Record<string, unknown> };
+      for (const key of pluginKeys) {
+        delete registry.plugins?.[key];
+      }
+      await this.writeJsonAtomic(installedPath, registry);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        this.log.appendLine(`[AI Toolkit / Claude] Could not update installed_plugins.json: ${err}`);
+      }
+    }
+  }
+
+  private async writeJsonAtomic(filePath: string, data: unknown): Promise<void> {
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    const tmp = `${filePath}.ai-toolkit-tmp`;
+    await fs.promises.writeFile(tmp, JSON.stringify(data, null, 2), 'utf-8');
+    try {
+      await fs.promises.rename(tmp, filePath);
+    } catch (err) {
+      await fs.promises.unlink(tmp).catch(() => undefined);
+      throw err;
+    }
   }
 
   private async readSettings(settingsPath: string): Promise<ClaudeSettings | null> {
@@ -161,15 +303,7 @@ export class ClaudeSettingsManager {
   }
 
   private async writeSettings(settingsPath: string, settings: ClaudeSettings): Promise<void> {
-    await fs.promises.mkdir(path.dirname(settingsPath), { recursive: true });
-    const tmp = `${settingsPath}.ai-toolkit-tmp`;
-    await fs.promises.writeFile(tmp, JSON.stringify(settings, null, 2), 'utf-8');
-    try {
-      await fs.promises.rename(tmp, settingsPath);
-    } catch (err) {
-      await fs.promises.unlink(tmp).catch(() => undefined);
-      throw err;
-    }
+    await this.writeJsonAtomic(settingsPath, settings);
   }
 
   private async readJson<T>(filePath: string): Promise<T | null> {
@@ -180,7 +314,7 @@ export class ClaudeSettingsManager {
 
   private getManagedState(): ClaudeManagedState {
     return this.context.globalState.get<ClaudeManagedState>(MANAGED_STATE_KEY) ?? {
-      managedMcpKeys: [], managedHookCommands: [], managedPluginPaths: [],
+      managedMcpKeys: [], managedHookCommands: [], managedPluginPaths: [], managedPluginKeys: [],
     };
   }
 
