@@ -213,6 +213,20 @@ export class ClaudeSettingsManager {
   }
 
   private async ensureMarketplaceRegistered(registryDir: string, pluginsRoot: string): Promise<void> {
+    // Claude Code expects a .claude-plugin/marketplace.json descriptor inside the
+    // marketplace root directory (pluginsRoot). Without it the marketplace fails to load.
+    const marketplaceMetaDir = path.join(pluginsRoot, '.claude-plugin');
+    const marketplaceJsonPath = path.join(marketplaceMetaDir, 'marketplace.json');
+    await fs.promises.mkdir(marketplaceMetaDir, { recursive: true });
+    await this.writeJsonAtomic(marketplaceJsonPath, {
+      id: 'ai-toolkit',
+      name: 'AI Toolkit',
+      description: 'Skills and plugins managed by the AI Toolkit VS Code extension',
+      version: '1.0.0',
+    });
+
+    // Register the marketplace in Claude Code's known_marketplaces.json so it
+    // knows where to find it.
     const marketplacesPath = path.join(registryDir, 'known_marketplaces.json');
     let marketplaces: Record<string, unknown> = {};
     try {
