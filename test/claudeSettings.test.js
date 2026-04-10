@@ -284,3 +284,21 @@ test('applyToolkits - removes plugin registration when toolkit disabled', async 
     assert.ok(!settings.enabledPlugins?.[pluginKey], 'Plugin should be removed from enabledPlugins');
   } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
 });
+
+test('applyToolkits - does not remove user-defined enabledPlugins entries', async () => {
+  const tmpDir = makeTempDir('cs-plugin-user-enabled');
+  const settingsPath = path.join(tmpDir, 'settings.json');
+  const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
+  try {
+    // Pre-populate settings.json with a user-defined enabledPlugins entry
+    fs.writeFileSync(settingsPath, JSON.stringify({
+      enabledPlugins: { 'user-plugin@some-marketplace': true }
+    }));
+    const ctx = makeContext();
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
+    await mgr.applyToolkits([]);
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    assert.ok(settings.enabledPlugins?.['user-plugin@some-marketplace'], 'User-defined enabledPlugins must not be removed');
+  } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
+});

@@ -162,16 +162,15 @@ export class ClaudeSettingsManager {
       await fs.promises.mkdir(claudePluginMetaDir, { recursive: true });
 
       // Write .claude-plugin/plugin.json
-      await fs.promises.writeFile(
+      await this.writeJsonAtomic(
         path.join(claudePluginMetaDir, 'plugin.json'),
-        JSON.stringify({
+        {
           name: tkName,
           description: `AI Toolkit managed: ${toolkit.name}`,
           version: 'managed',
           author: { name: 'ai-toolkit' },
           keywords: ['skills', 'ai-toolkit'],
-        }, null, 2),
-        'utf-8'
+        }
       );
 
       // Symlink each skill
