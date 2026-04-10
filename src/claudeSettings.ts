@@ -154,22 +154,20 @@ export class ClaudeSettingsManager {
       if (skillAssets.length === 0) continue;
 
       const tkName = this.pluginName(toolkit);
-      const pluginDir = path.join(pluginsRoot, tkName);
+      // Plugins live under pluginsRoot/plugins/<name>/ — mirrors how claude-plugins-official
+      // stores plugins in installLocation/plugins/<name>/.
+      const pluginDir = path.join(pluginsRoot, 'plugins', tkName);
       const skillsDir = path.join(pluginDir, 'skills');
-      const claudePluginMetaDir = path.join(pluginDir, '.claude-plugin');
 
       await fs.promises.mkdir(skillsDir, { recursive: true });
-      await fs.promises.mkdir(claudePluginMetaDir, { recursive: true });
 
-      // Write .claude-plugin/plugin.json
+      // Claude Code identifies plugins by package.json at the plugin root.
       await this.writeJsonAtomic(
-        path.join(claudePluginMetaDir, 'plugin.json'),
+        path.join(pluginDir, 'package.json'),
         {
           name: tkName,
+          version: '1.0.0',
           description: `AI Toolkit managed: ${toolkit.name}`,
-          version: 'managed',
-          author: { name: 'ai-toolkit' },
-          keywords: ['skills', 'ai-toolkit'],
         }
       );
 
@@ -218,7 +216,9 @@ export class ClaudeSettingsManager {
     const marketplaceMetaDir = path.join(pluginsRoot, '.claude-plugin');
     const marketplaceJsonPath = path.join(marketplaceMetaDir, 'marketplace.json');
     await fs.promises.mkdir(marketplaceMetaDir, { recursive: true });
-    // Strip @ai-toolkit suffix to get the bare plugin name each entry uses.
+    // Strip @ai-toolkit suffix to get bare plugin names.
+    // path field is relative to the marketplace root (pluginsRoot), matching
+    // how claude-plugins-official stores plugins under its installLocation/plugins/ dir.
     const pluginNames = pluginKeys.map(k => k.replace(/@ai-toolkit$/, ''));
     await this.writeJsonAtomic(marketplaceJsonPath, {
       id: 'ai-toolkit',
@@ -226,7 +226,7 @@ export class ClaudeSettingsManager {
       description: 'Skills and plugins managed by the AI Toolkit VS Code extension',
       version: '1.0.0',
       owner: { name: 'AI Toolkit' },
-      plugins: pluginNames.map(name => ({ name })),
+      plugins: pluginNames.map(name => ({ name, path: `plugins/${name}` })),
     });
 
     // Register the marketplace in Claude Code's known_marketplaces.json so it
