@@ -1,3 +1,4 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { ClonedToolkitsStore } from './clonedToolkitsStore';
 import { DashboardHost, DashboardMessage, DashboardPanel, DashboardState } from './dashboard';
@@ -185,13 +186,13 @@ async function refreshToolkits(): Promise<void> {
 
 async function warnIfOldFormatToolkits(toolkitPaths: string[], discoveredCount: number): Promise<void> {
   if (discoveredCount > 0) return;
-  const path = require('path') as typeof import('path');
   const OLD_FORMAT_INDICATORS = ['agents', 'instructions', 'skills', 'prompts'];
-  for (const tkPath of toolkitPaths) {
+  for (const rawPath of toolkitPaths) {
+    const tkPath = expandHomePath(rawPath);
     for (const folder of OLD_FORMAT_INDICATORS) {
       if (await pathExists(path.join(tkPath, folder))) {
         void vscode.window.showWarningMessage(
-          `AI Toolkit: "${path.basename(tkPath)}" uses the old format. Migrate to copilot/ and claude/ subfolders to use the new DualPlatform format.`,
+          `AI Toolkit: "${path.basename(rawPath)}" uses the old format. Migrate to copilot/ and claude/ subfolders to use the new DualPlatform format.`,
           'Learn More',
         );
         return;
@@ -201,7 +202,7 @@ async function warnIfOldFormatToolkits(toolkitPaths: string[], discoveredCount: 
     for (const folder of OLD_FORMAT_INDICATORS) {
       if (await pathExists(path.join(githubDir, folder))) {
         void vscode.window.showWarningMessage(
-          `AI Toolkit: "${path.basename(tkPath)}" uses the old .github/ format. Migrate to the new DualPlatform layout.`,
+          `AI Toolkit: "${path.basename(rawPath)}" uses the old .github/ format. Migrate to the new DualPlatform layout.`,
           'Learn More',
         );
         return;
