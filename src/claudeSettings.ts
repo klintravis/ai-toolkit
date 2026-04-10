@@ -40,7 +40,10 @@ export class ClaudeSettingsManager {
   private async applyHooksAndMcps(toolkits: Toolkit[], oldPluginKeys: string[], newPluginKeys: string[]): Promise<void> {
     const settingsPath = expandHomePath(this.getSettingsPath());
     const current = await this.readSettings(settingsPath);
-    if (current === null) return;
+    if (current === null) {
+      this.log.appendLine('[AI Toolkit / Claude] Skipping hooks/MCP update — settings.json is malformed');
+      return;
+    }
 
     const managed = this.getManagedState();
 
@@ -64,17 +67,14 @@ export class ClaudeSettingsManager {
       delete current.mcpServers;
     }
 
-    // Manage enabledPlugins: remove old managed plugin keys, add new ones
-    if (!current.enabledPlugins || typeof current.enabledPlugins !== 'object') {
-      current.enabledPlugins = {};
-    }
-    const enabledPlugins = current.enabledPlugins as Record<string, boolean>;
-    for (const key of oldPluginKeys) {
-      delete enabledPlugins[key];
-    }
-    for (const key of newPluginKeys) {
-      enabledPlugins[key] = true;
-    }
+    // Manage enabledPlugins: remove old managed keys, add new ones.
+    // Preserves any user-defined plugin entries.
+    const enabledPlugins: Record<string, boolean> =
+      (current.enabledPlugins && typeof current.enabledPlugins === 'object')
+        ? { ...(current.enabledPlugins as Record<string, boolean>) }
+        : {};
+    for (const key of oldPluginKeys) { delete enabledPlugins[key]; }
+    for (const key of newPluginKeys) { enabledPlugins[key] = true; }
     if (Object.keys(enabledPlugins).length === 0) {
       delete current.enabledPlugins;
     } else {
@@ -85,7 +85,7 @@ export class ClaudeSettingsManager {
     const newMcpKeys: string[] = [];
 
     for (const toolkit of toolkits) {
-      const tkName = path.basename(toolkit.rootPath);
+      const tkName = this.pluginName(toolkit);
 
       for (const asset of toolkit.assets) {
         if (asset.type === AssetType.Hook && (asset.platform === 'claude' || asset.platform === 'both') && !asset.isFolder) {
@@ -153,7 +153,7 @@ export class ClaudeSettingsManager {
       );
       if (skillAssets.length === 0) continue;
 
-      const tkName = path.basename(toolkit.rootPath);
+      const tkName = this.pluginName(toolkit);
       const pluginDir = path.join(pluginsRoot, tkName);
       const skillsDir = path.join(pluginDir, 'skills');
       const claudePluginMetaDir = path.join(pluginDir, '.claude-plugin');
@@ -319,5 +319,23 @@ export class ClaudeSettingsManager {
 
   private async setManagedState(state: ClaudeManagedState): Promise<void> {
     await this.context.globalState.update(MANAGED_STATE_KEY, state);
+  }
+
+  /**
+   * Derives a filesystem-safe, collision-resistant plugin name from the toolkit.
+   * toolkit.id is a tilde-relative path like ~/work/company/my-toolkit.
+   * Stripping the tilde prefix and replacing separators gives "work-company-my-toolkit",
+   * which is unique across toolkits with the same folder name in different parent paths.
+   * Falls back to path.basename when id is not tilde-relative (e.g. in tests).
+   */
+  private pluginName(toolkit: Toolkit): string {
+    if (!toolkit.id.startsWith('~')) {
+      return path.basename(toolkit.rootPath);
+    }
+    return toolkit.id
+      .replace(/^~[/\\]?/, '')          // strip leading ~/
+      .replace(/[/\\]/g, '-')           // slashes → dashes
+      .replace(/[^a-zA-Z0-9._-]/g, '_') // other unsafe chars → underscore
+      || path.basename(toolkit.rootPath); // fallback (shouldn't happen)
   }
 }

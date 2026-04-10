@@ -7,6 +7,10 @@ export type AssetType = string;
 
 /**
  * Supported platforms for assets.
+ * - 'copilot': GitHub Copilot only
+ * - 'claude': Claude Code only
+ * - 'both': registered with both platforms (e.g. claude/skills)
+ * - 'shared': surfaced in the tree view only; no settings written to either platform
  */
 export type AssetPlatform = 'copilot' | 'claude' | 'both' | 'shared';
 export const AssetType = {
@@ -24,6 +28,8 @@ export const AssetType = {
 
 /**
  * The format/layout of a discovered toolkit source.
+ * Kept as an enum (rather than a string literal type) so new formats can be
+ * added without changing every switch statement that exhausts the type.
  */
 export enum SourceFormat {
   DualPlatform = 'dual-platform',

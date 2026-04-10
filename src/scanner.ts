@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { pathExists, toToolkitId } from './pathUtils';
-import { Asset, AssetMapping, AssetType, SourceFormat, Toolkit, ToolkitManifest } from './types';
+import { Asset, AssetMapping, AssetPlatform, AssetType, SourceFormat, Toolkit, ToolkitManifest } from './types';
 
 const MAX_SCAN_DEPTH = 5;
 const EXCLUDED_FILENAMES = new Set([
@@ -65,6 +65,9 @@ export class ToolkitScanner {
   ): Promise<Toolkit | null> {
     const id = toToolkitId(rootPath);
     const manifest = await this.loadManifest(rootPath);
+    // Per-toolkit manifest mappings are additive — they extend but cannot override
+    // the extension-level defaults. This prevents a broken or malicious manifest
+    // from disabling the user's configured asset discovery.
     const effectiveMappings = manifest?.mappings
       ? [...mappings, ...manifest.mappings]
       : mappings;
@@ -76,18 +79,18 @@ export class ToolkitScanner {
     } catch {
       toolkitRealRoot = rootPath.replace(/\\/g, '/').toLowerCase();
     }
-    const visited = new Set<string>();
+    const visitedLinks = new Set<string>();
     const assets: Asset[] = [];
-    const seen = new Set<string>();
+    const seenIds = new Set<string>();
 
     for (const mapping of effectiveMappings) {
       const folderPath = path.join(rootPath, ...mapping.folder.split('/'));
       if (!(await pathExists(folderPath))) continue;
       const discovered = await this.scanMappingFolder(
-        folderPath, mapping, id, mapping.folder, MAX_SCAN_DEPTH, toolkitRealRoot, visited,
+        folderPath, mapping, id, mapping.folder, MAX_SCAN_DEPTH, toolkitRealRoot, visitedLinks,
       );
       for (const asset of discovered) {
-        if (!seen.has(asset.id)) { seen.add(asset.id); assets.push(asset); }
+        if (!seenIds.has(asset.id)) { seenIds.add(asset.id); assets.push(asset); }
       }
     }
 
@@ -118,7 +121,7 @@ export class ToolkitScanner {
         if (kind.isDirectory) {
           const relativePath = `${relativeBase}/${entry.name}`;
           const assetId = `${toolkitId}::${relativePath}`;
-          const children = await this.scanFolderContents(fullPath, mapping.assetType, assetId, relativePath, depth - 1, toolkitRealRoot, visited);
+          const children = await this.scanFolderContents(fullPath, mapping.assetType, mapping.platform, assetId, relativePath, depth - 1, toolkitRealRoot, visited);
           assets.push({
             id: assetId, name: this.deriveDisplayName(entry.name), type: mapping.assetType,
             sourcePath: fullPath, relativePath, isFolder: true, platform: mapping.platform, children,
@@ -141,7 +144,7 @@ export class ToolkitScanner {
   }
 
   private async scanFolderContents(
-    folderPath: string, type: AssetType, parentId: string, parentRelPath: string,
+    folderPath: string, type: AssetType, platform: AssetPlatform, parentId: string, parentRelPath: string,
     depth: number, toolkitRealRoot: string, visited: Set<string>,
   ): Promise<Asset[]> {
     if (depth <= 0) return [];
@@ -154,12 +157,12 @@ export class ToolkitScanner {
       const relativePath = `${parentRelPath}/${entry.name}`;
       const kind = await this.classifyEntry(fullPath, entry, toolkitRealRoot, visited);
       if (kind.isDirectory) {
-        const nested = await this.scanFolderContents(fullPath, type, parentId, relativePath, depth - 1, toolkitRealRoot, visited);
+        const nested = await this.scanFolderContents(fullPath, type, platform, parentId, relativePath, depth - 1, toolkitRealRoot, visited);
         if (nested.length > 0) {
-          children.push({ id: `${toolkitId}::${relativePath}`, name: entry.name, type, sourcePath: fullPath, relativePath, isFolder: true, platform: 'both', children: nested });
+          children.push({ id: `${toolkitId}::${relativePath}`, name: entry.name, type, sourcePath: fullPath, relativePath, isFolder: true, platform, children: nested });
         }
       } else if (kind.isFile) {
-        children.push({ id: `${toolkitId}::${relativePath}`, name: entry.name, type, sourcePath: fullPath, relativePath, isFolder: false, platform: 'both' });
+        children.push({ id: `${toolkitId}::${relativePath}`, name: entry.name, type, sourcePath: fullPath, relativePath, isFolder: false, platform });
       }
     }
     return children;

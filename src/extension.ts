@@ -149,7 +149,7 @@ export function deactivate(): void {
   if (updateCheckInterval) { clearInterval(updateCheckInterval); }
 }
 
-function isCopilotAutoConfigEnabled(): boolean {
+function isAutoConfigEnabled(): boolean {
   return vscode.workspace.getConfiguration('aiToolkit').get<boolean>('configureCopilotSettings', true);
 }
 
@@ -248,7 +248,7 @@ async function scanAndApplyToolkits(): Promise<void> {
   treeProvider.setToolkits(toolkitsBySource);
   updateStatusBarAndTree();
 
-  if (isCopilotAutoConfigEnabled()) {
+  if (isAutoConfigEnabled()) {
     await copilotSettings.applyToolkits(allToolkits);
     await claudeSettings.applyToolkits(allToolkits);
   }
@@ -340,7 +340,7 @@ async function toggleToolkit(node: { toolkit?: Toolkit }, enabled: boolean): Pro
   treeProvider.refresh();
   updateStatusBarAndTree();
 
-  if (isCopilotAutoConfigEnabled()) {
+  if (isAutoConfigEnabled()) {
     await copilotSettings.applyToolkits(allToolkits);
     await claudeSettings.applyToolkits(allToolkits);
   }
@@ -359,7 +359,7 @@ async function toggleAll(enabled: boolean): Promise<void> {
   treeProvider.refresh();
   updateStatusBarAndTree();
 
-  if (isCopilotAutoConfigEnabled()) {
+  if (isAutoConfigEnabled()) {
     await copilotSettings.applyToolkits(allToolkits);
     await claudeSettings.applyToolkits(allToolkits);
   }
@@ -393,6 +393,8 @@ async function removeEnabledFlag(toolkitId: string): Promise<void> {
     delete enabledMap[toolkitId];
     await cfg.update('enabledToolkits', enabledMap, vscode.ConfigurationTarget.Global);
   } else {
+    // The toolkit had no explicit enabled entry (defaults to false).
+    // Still refresh so the tree reflects the deletion.
     await refreshToolkits();
   }
 }
