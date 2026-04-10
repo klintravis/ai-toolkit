@@ -145,6 +145,7 @@ export class ToolkitScanner {
     depth: number, toolkitRealRoot: string, visited: Set<string>,
   ): Promise<Asset[]> {
     if (depth <= 0) return [];
+    const toolkitId = parentId.split('::')[0];
     const children: Asset[] = [];
     const entries = await this.readDirSafe(folderPath);
     for (const entry of entries) {
@@ -155,10 +156,10 @@ export class ToolkitScanner {
       if (kind.isDirectory) {
         const nested = await this.scanFolderContents(fullPath, type, parentId, relativePath, depth - 1, toolkitRealRoot, visited);
         if (nested.length > 0) {
-          children.push({ id: `${parentId}::${entry.name}`, name: entry.name, type, sourcePath: fullPath, relativePath, isFolder: true, platform: 'both', children: nested });
+          children.push({ id: `${toolkitId}::${relativePath}`, name: entry.name, type, sourcePath: fullPath, relativePath, isFolder: true, platform: 'both', children: nested });
         }
       } else if (kind.isFile) {
-        children.push({ id: `${parentId}::${entry.name}`, name: entry.name, type, sourcePath: fullPath, relativePath, isFolder: false, platform: 'both' });
+        children.push({ id: `${toolkitId}::${relativePath}`, name: entry.name, type, sourcePath: fullPath, relativePath, isFolder: false, platform: 'both' });
       }
     }
     return children;
@@ -176,9 +177,10 @@ export class ToolkitScanner {
         manifest.mappings = (raw.mappings as unknown[]).filter((m): m is AssetMapping => {
           if (typeof m !== 'object' || m === null) return false;
           const e = m as Record<string, unknown>;
-          return typeof e.folder === 'string' &&
-            typeof e.assetType === 'string' &&
-            ['copilot', 'claude', 'both', 'shared'].includes(e.platform as string);
+          if (typeof e.folder !== 'string' || typeof e.assetType !== 'string') return false;
+          if (!['copilot', 'claude', 'both', 'shared'].includes(e.platform as string)) return false;
+          if ('extensions' in e && !Array.isArray(e.extensions)) return false;
+          return true;
         });
       }
       return manifest;

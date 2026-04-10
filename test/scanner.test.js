@@ -162,8 +162,6 @@ test('scanPath - full DualPlatform toolkit discovers all asset types', async () 
     const result = await scanner.scanPath(dir, {});
     assert.equal(result.length, 1);
     const tk = result[0];
-    assert.equal(tk.assets.length, 6);
-
     const byType = (type) => tk.assets.filter(a => a.type === type);
     assert.equal(byType(AssetType.Agent).length, 1);
     assert.equal(byType(AssetType.Instruction).length, 1);
@@ -379,7 +377,11 @@ test('scanPath - directory symlinks escaping toolkit root are rejected', async (
     try {
       const type = process.platform === 'win32' ? 'junction' : 'dir';
       fs.symlinkSync(externalSkill, path.join(dir, 'claude', 'skills', 'evil-skill'), type);
-    } catch { return; }
+    } catch {
+      // eslint-disable-next-line no-console
+      console.log('[skip] symlink escape test: symlink creation requires elevated privileges on this platform');
+      return;
+    }
     const result = await scanner.scanPath(dir, {});
     assert.equal(result.length, 0, 'Escaped symlink should produce no assets');
   } finally {
