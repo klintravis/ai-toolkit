@@ -1,18 +1,18 @@
 # AI Toolkit
 
-A VS Code extension for managing GitHub Copilot customization assets across your team. Clone toolkits from GitHub, enable them with one click, and pin your favourite individual assets — all without touching your workspace files.
+A VS Code extension for sharing AI assets (GitHub Copilot agents, instructions, skills, Claude Code hooks, MCP servers) across your entire team. Point the extension at an external folder — a "toolkit" — and it writes the right paths into VS Code User-level settings and `~/.claude/settings.json` automatically. No files are copied into your workspace.
 
-Works with **[awesome-copilot](https://github.com/github/awesome-copilot)**, **[CopilotCustomizer](https://github.com/klintravis/CopilotCustomizer)**, or any folder following standard Copilot asset layout conventions.
+Works with the **[DualPlatform](#toolkit-format)** layout (both Copilot and Claude Code assets in one repo), **[awesome-copilot](https://github.com/github/awesome-copilot)**, and any folder following standard Copilot asset conventions.
 
 ---
 
 ## How It Works
 
-Toolkits live in **external folders** on your machine (e.g. `~/.ai-toolkits/`). When you enable a toolkit the extension writes paths into your VS Code **User-level settings** so Copilot discovers the assets directly — nothing is copied into your workspace.
+Toolkits live in **external folders** on your machine (default `~/.ai-toolkits/`). When you enable a toolkit:
 
-- One copy of a toolkit serves every workspace on your machine
-- Enable and disable toolkits globally from the sidebar or dashboard
-- Updates to a cloned toolkit are pulled in with a single click
+- Copilot asset paths are written into VS Code **User-level settings** so they apply across every workspace
+- Claude Code hooks, MCP servers, and skills are written into `~/.claude/settings.json` and the Claude Code plugin registry
+- Nothing is copied into your workspace — one install serves every project
 
 ---
 
@@ -20,15 +20,18 @@ Toolkits live in **external folders** on your machine (e.g. `~/.ai-toolkits/`). 
 
 ### Prerequisites
 
-- VS Code 1.96 or later
-- GitHub Copilot extension installed and active
-- Git on your PATH (required only for cloning toolkits)
+| Requirement | Notes |
+|---|---|
+| VS Code 1.96 or later | |
+| GitHub Copilot extension | For Copilot assets |
+| Claude Code | For Claude-side assets |
+| Git on PATH | Required only for cloning toolkits from GitHub |
 
 ### Install from the `.vsix`
 
 1. Download the latest `.vsix` from [Releases](https://github.com/klintravis/ai-toolkit/releases)
 2. In VS Code: **Extensions** → `...` menu → **Install from VSIX…**
-3. Select the downloaded file and reload when prompted
+3. Select the file and reload when prompted
 
 ### Install from source
 
@@ -39,124 +42,169 @@ npm install
 npm run package          # builds ai-toolkit-0.1.0.vsix
 ```
 
-Then install the generated `.vsix` as above, or press **F5** to launch the Extension Development Host for a live test session.
+Then install the generated `.vsix` as above, or press **F5** to open the Extension Development Host.
 
 ---
 
 ## Quick Start
 
-### 1 — Clone a community toolkit
+### 1 — Clone a toolkit from GitHub
 
-Open the AI Toolkit sidebar (look for the hexagon icon in the activity bar), then click the **Clone** button (cloud icon) in the toolbar.
-
-Paste a GitHub URL or `owner/repo` shorthand — for example:
+Open the **AI Toolkits** panel in the Explorer sidebar. Click the **Clone** (cloud) button in the toolbar and paste a GitHub URL or `owner/repo` shorthand:
 
 ```
 github/awesome-copilot
 ```
 
-The extension clones into `~/.ai-toolkits/` and automatically registers the toolkit.
+The extension clones into `~/.ai-toolkits/` and registers the toolkit automatically.
 
 ### 2 — Enable the toolkit
 
-Click the **enable** checkmark next to the toolkit name. Copilot settings are updated immediately — no restart needed.
+Click the checkmark next to the toolkit name. Copilot and Claude settings update immediately — no restart needed.
 
 ### 3 — Browse assets
 
-Expand the toolkit in the tree to see agents, instructions, skills, prompts, and more. Click any asset to open it in the editor.
+Expand the toolkit to see agents, instructions, skills, hooks, MCP servers, and more. Click any asset to open it in the editor.
 
 ### 4 — Pin your favourites
 
-Right-click any asset and choose **Pin to My Picks**. Pinned assets appear under **My Picks** as their own toolkit and stay active even when the source toolkit is disabled.
+Right-click any asset → **Pin to My Picks**. Pinned assets appear under **My Picks** as their own toolkit and remain active even when the source toolkit is disabled.
 
 ---
 
 ## Dashboard
 
-Click the **dashboard** icon in the sidebar toolbar (or run `AI Toolkit: Open Dashboard` from the Command Palette) to open the visual overview. From here you can:
+Click the **dashboard** icon in the sidebar toolbar (or run `AI Toolkit: Open Dashboard`) to open the visual overview. From here you can:
 
-- Toggle any toolkit on or off
-- See all your pinned assets and manage groups
-- Clone new toolkits, check for updates, and adjust settings
-
----
-
-## Updating Toolkits
-
-The extension checks cloned toolkits for updates on startup (configurable). When updates are available an arrow icon appears next to the toolkit name — click it to fast-forward pull. You can also:
-
-- **Check now:** toolbar sync button or `AI Toolkit: Check for Toolkit Updates`
-- **Update one:** right-click → Update Toolkit
-- **Update all:** `AI Toolkit: Update All Toolkits`
+- Toggle toolkits on or off
+- See and manage pinned assets
+- Clone new toolkits and adjust settings
 
 ---
 
-## My Picks (Pinning Individual Assets)
+## Toolkit Format
 
-Picks let you curate a personal set of assets from across multiple toolkits.
+The extension supports a **DualPlatform** folder layout that serves both GitHub Copilot and Claude Code from a single repo:
 
-| Action | How |
-|--------|-----|
-| Pin an asset | Right-click asset → **Pin to My Picks** |
-| Unpin | Right-click pinned asset → **Unpin from My Picks** |
-| Organise into groups | Right-click → **Move to Group…**, or use **Create Group** |
-| Rename / delete a group | Right-click the group node in the tree |
-| Open picks folder | `AI Toolkit: Open My Picks Folder` |
+```
+my-toolkit/
+  ai-toolkit.json           # optional manifest
+  copilot/
+    agents/                 # *.agent.md         → Copilot agents
+    instructions/           # *.instructions.md  → Copilot instructions
+    prompts/                # *.prompt.md        → Copilot prompts
+    plugins/                # folder-based       → Copilot plugins
+    hooks/                  # folder-based       → Copilot hooks
+    workflows/              # *.md               → Copilot workflows
+  claude/
+    skills/                 # folder-based       → Copilot AND Claude Code skills
+    hooks/                  # *.json             → Claude Code hooks
+    mcps/                   # *.json             → Claude Code MCP servers
+    instructions/           # *.md               → Claude Code instructions (planned)
+  shared/
+    standards/              # folder-based       → visible in tree only
+    docs/                   # *.md               → reference material
+```
 
-Picks are stored as symlinks (or copies as a fallback) under `~/.ai-toolkits/my-picks/` and are registered as a synthetic toolkit so Copilot discovers them automatically.
+**Platform routing:**
 
----
+| Folder | Configures |
+|---|---|
+| `copilot/*` | GitHub Copilot only |
+| `claude/skills/` | Both Copilot AND Claude Code |
+| `claude/hooks/`, `claude/mcps/`, `claude/instructions/` | Claude Code only |
+| `shared/*` | Tree display only — no settings written |
 
-## Adding Your Own Folders
+See [docs/authoring-toolkits.md](docs/authoring-toolkits.md) for full authoring guidance.
 
-You can point the extension at any folder that contains Copilot asset subfolders (`agents/`, `instructions/`, `skills/`, etc.).
-
-1. Click **+** in the sidebar toolbar → **Add Toolkit Folder**
-2. Browse to your folder
-3. The extension scans it and adds it to the tree
-
-To remove a folder right-click the toolkit → **Remove Toolkit Folder**.
+See [docs/claude-code-integration.md](docs/claude-code-integration.md) for how Claude Code skills, hooks, and MCP servers are registered.
 
 ---
 
 ## Supported Asset Types
 
-| Type | File pattern | Copilot setting configured |
-|------|-------------|---------------------------|
+| Type | File pattern | Configured in |
+|---|---|---|
 | Agents | `*.agent.md` | `chat.agentFilesLocations` |
 | Instructions | `*.instructions.md` | `chat.instructionsFilesLocations`, `codeGeneration.instructions` |
-| Skills | folder with `SKILL.md` | `chat.agentSkillsLocations` |
+| Skills | subfolder with `SKILL.md` | `chat.agentSkillsLocations` + Claude plugin registry |
 | Prompts | `*.prompt.md` | `chat.promptFilesLocations` |
-| Hooks | folder | `chat.hookFilesLocations` |
-| Plugins | folder | (workspace folder registration) |
-| Workflows | `*.md` | (workspace folder registration) |
-| Standards | folder | (workspace folder registration) |
+| Copilot hooks | subfolder | `chat.hookFilesLocations` |
+| Plugins | subfolder | workspace folder registration |
+| Workflows | `*.md` | workspace folder registration |
+| Standards | subfolder | tree display only |
+| Claude hooks | `*.json` | `~/.claude/settings.json` → `hooks` |
+| MCP servers | `*.json` | `~/.claude/settings.json` → `mcpServers` |
 
 ---
 
-## Settings
+## My Picks (Pinning Individual Assets)
+
+Picks let you curate a personal asset set from across multiple toolkits without forking anything.
+
+| Action | How |
+|---|---|
+| Pin an asset | Right-click asset → **Pin to My Picks** |
+| Unpin | Right-click pinned asset → **Unpin from My Picks** |
+| Organise into groups | Right-click → **Move to Group…** or **Create Group** |
+| Rename / delete a group | Right-click the group node |
+| Open picks folder | `AI Toolkit: Open My Picks Folder` |
+
+Picks are stored as symlinks (or file copies on Windows without Developer Mode) under `~/.ai-toolkits/my-picks/` and are registered as a synthetic toolkit so Copilot discovers them automatically.
+
+---
+
+## Updating Toolkits
+
+The extension checks for updates on startup. When new commits are available an arrow icon appears next to the toolkit name.
+
+| Action | How |
+|---|---|
+| Check for updates now | Toolbar sync button or `AI Toolkit: Check for Toolkit Updates` |
+| Update one toolkit | Right-click toolkit → **Update Toolkit** |
+| Update all toolkits | `AI Toolkit: Update All Toolkits` |
+
+Updates use fast-forward-only pulls. If the remote history has diverged you will need to resolve the situation manually in a terminal.
+
+---
+
+## Adding Your Own Folders
+
+1. Click **+** in the sidebar toolbar → **Add Toolkit Folder**
+2. Browse to your folder
+3. The extension scans it and adds it to the tree
+
+To remove a folder: right-click the toolkit → **Remove Toolkit Folder**.
+
+---
+
+## Settings Reference
 
 | Setting | Default | Description |
-|---------|---------|-------------|
+|---|---|---|
 | `aiToolkit.toolkitPaths` | `[]` | Folders to scan for toolkits |
+| `aiToolkit.enabledToolkits` | `{}` | Per-toolkit enabled state |
+| `aiToolkit.configureCopilotSettings` | `true` | Auto-write Copilot and Claude settings on enable/disable |
 | `aiToolkit.cloneDirectory` | `~/.ai-toolkits` | Where cloned repos are stored |
 | `aiToolkit.picksDirectory` | `~/.ai-toolkits/my-picks` | Where pinned assets are linked |
-| `aiToolkit.configureCopilotSettings` | `true` | Auto-update Copilot settings on enable/disable |
-| `aiToolkit.checkForUpdatesOnStartup` | `true` | Check for updates shortly after VS Code starts |
-| `aiToolkit.updateCheckIntervalMinutes` | `0` | Periodic update interval in minutes (0 = disabled, minimum 5) |
+| `aiToolkit.checkForUpdatesOnStartup` | `true` | Check for updates after VS Code starts |
+| `aiToolkit.updateCheckIntervalMinutes` | `0` | Periodic update interval in minutes (0 = disabled) |
+| `aiToolkit.claudeSettingsPath` | `~/.claude/settings.json` | Path to Claude Code settings |
+| `aiToolkit.claudePluginsPath` | `~/.ai-toolkits/claude-plugins` | Where skill plugin directories are materialized |
+| `aiToolkit.claudePluginsRegistryPath` | `~/.claude/plugins` | Claude Code plugin registry directory |
 
 ---
 
 ## Command Reference
 
 | Command | Description |
-|---------|-------------|
+|---|---|
 | `AI Toolkit: Add Toolkit Folder` | Browse for a local toolkit folder |
 | `AI Toolkit: Clone Toolkit from GitHub…` | Clone a GitHub repo into the clone directory |
-| `AI Toolkit: Enable Toolkit` | Enable a toolkit and update Copilot settings |
-| `AI Toolkit: Disable Toolkit` | Disable a toolkit and remove its Copilot entries |
-| `AI Toolkit: Enable All Toolkits` | Enable everything |
-| `AI Toolkit: Disable All Toolkits` | Disable everything and clean managed settings |
+| `AI Toolkit: Enable Toolkit` | Enable a toolkit and update settings |
+| `AI Toolkit: Disable Toolkit` | Disable a toolkit and remove its settings entries |
+| `AI Toolkit: Enable All Toolkits` | Enable all registered toolkits |
+| `AI Toolkit: Disable All Toolkits` | Disable all and clean managed settings |
 | `AI Toolkit: Refresh Toolkits` | Re-scan all configured folders |
 | `AI Toolkit: Check for Toolkit Updates` | Fetch remotes and show update badges |
 | `AI Toolkit: Update Toolkit` | Pull updates for a specific cloned toolkit |
@@ -168,25 +216,28 @@ To remove a folder right-click the toolkit → **Remove Toolkit Folder**.
 | `AI Toolkit: Delete Group` | Delete a picks group and its contents |
 | `AI Toolkit: Rename Group` | Rename a picks group |
 | `AI Toolkit: Move to Group…` | Move a pinned asset to a different group |
-| `AI Toolkit: Open My Picks Folder` | Reveal the picks directory in the OS file explorer |
-| `AI Toolkit: Add to Workspace` | Add a toolkit folder to the workspace (for plugin/workflow discovery) |
+| `AI Toolkit: Open My Picks Folder` | Reveal the picks directory in the file explorer |
+| `AI Toolkit: Add to Workspace` | Add a toolkit folder to the workspace |
 | `AI Toolkit: Remove from Workspace` | Remove a toolkit folder from the workspace |
 
 ---
 
 ## Troubleshooting
 
-**Copilot isn't picking up my assets after enabling a toolkit**
-Open VS Code settings (`Ctrl+,`) and search for `chat.agentFilesLocations` — the toolkit's asset folders should appear. If they don't, try `AI Toolkit: Refresh Toolkits` and check the **AI Toolkit** output channel for errors.
+**Copilot isn't picking up assets after enabling a toolkit**
+Open VS Code settings (`Ctrl+,`) and search for `chat.agentFilesLocations`. The toolkit's asset folders should appear. If they don't, run `AI Toolkit: Refresh Toolkits` and check the **AI Toolkit** output channel.
 
 **Clone fails with an authentication error**
 The extension uses your system git config for credentials. Run `git clone <url>` in a terminal first to trigger your credential helper, then retry the clone in the extension.
 
 **Symlinks not working on Windows**
-Windows requires Developer Mode or administrator rights to create symlinks. If neither is available, the extension automatically falls back to full file copies, which work identically from Copilot's perspective.
+Windows requires Developer Mode or administrator rights to create symlinks. If neither is available, the extension automatically falls back to full file copies, which work identically from Copilot's and Claude's perspective.
 
-**An asset I pinned isn't showing up**
-Run `AI Toolkit: Refresh Toolkits`. If the source file was moved or deleted, the extension will prune the stale pin automatically.
+**A pinned asset isn't showing up**
+Run `AI Toolkit: Refresh Toolkits`. If the source file was moved or deleted, the extension prunes the stale pin automatically.
+
+**Claude Code skills or hooks aren't loading**
+Check `~/.claude/settings.json` to confirm the plugin key (`<toolkit-name>@ai-toolkit`) is present under the enabled plugins list. Also verify that `~/.claude/plugins/installed_plugins.json` contains an entry for the toolkit. Run **Refresh Toolkits** to force a re-write.
 
 ---
 
