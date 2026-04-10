@@ -1,12 +1,12 @@
 {
   "mcpServers": {
     "context7": {
-      "command": "npx",
-      "args": ["-y", "@upwindai/context7-mcp@latest"]
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@upwindai/context7-mcp@latest"]
     },
     "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"]
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-github"]
     }
   }
 }
