@@ -229,8 +229,9 @@ async function scanAndApplyToolkits(): Promise<void> {
     if (result.status === 'fulfilled' && result.value.length > 0) {
       toolkitsBySource.set(toolkitPaths[i], result.value);
       discovered.push(...result.value);
+      outputChannel.appendLine(`[scan] Found ${result.value.map(t => `"${t.name}"`).join(', ')} in: ${toolkitPaths[i]}`);
     } else if (result.status === 'fulfilled') {
-      outputChannel.appendLine(`[scan] No toolkits found in: ${toolkitPaths[i]} — folder must contain a copilot/, claude/, or shared/ subfolder`);
+      outputChannel.appendLine(`[scan] No toolkits found in: ${toolkitPaths[i]} — folder must contain a copilot/, claude/, or shared/ subfolder (or be a non-empty skill folder)`);
     } else {
       outputChannel.appendLine(`[scan] Failed to scan ${toolkitPaths[i]}: ${result.reason}`);
     }

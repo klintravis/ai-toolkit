@@ -390,6 +390,52 @@ test('scanPath - directory symlinks escaping toolkit root are rejected', async (
   }
 });
 
+// --- Sideload (standalone skill folder) ---
+
+test('scanPath - sideloads a plain skill folder with no DualPlatform structure', async () => {
+  const scanner = new ToolkitScanner();
+  const dir = makeTempDir('sideload');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'SKILL.md'), '# The Sauce');
+    fs.writeFileSync(path.join(dir, 'run.sh'), '#!/bin/sh');
+    const result = await scanner.scanPath(dir, {});
+    assert.equal(result.length, 1, 'should produce one synthetic toolkit');
+    const tk = result[0];
+    assert.equal(tk.name, path.basename(dir));
+    assert.equal(tk.rootPath, dir);
+    assert.equal(tk.assets.length, 1);
+    const asset = tk.assets[0];
+    assert.equal(asset.type, AssetType.Skill);
+    assert.equal(asset.platform, 'claude');
+    assert.equal(asset.isFolder, true);
+    assert.equal(asset.sourcePath, dir);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('scanPath - sideloaded skill exposes children', async () => {
+  const scanner = new ToolkitScanner();
+  const dir = makeTempDir('sideload-children');
+  try {
+    fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'SKILL.md'), '# skill');
+    fs.writeFileSync(path.join(dir, 'src', 'main.js'), 'module.exports = {}');
+    const result = await scanner.scanPath(dir, {});
+    const asset = result[0]?.assets[0];
+    assert.ok(asset?.children && asset.children.length > 0, 'children should be scanned');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('scanPath - empty folder does not sideload', async () => {
+  const scanner = new ToolkitScanner();
+  const dir = makeTempDir('sideload-empty');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const result = await scanner.scanPath(dir, {});
+    assert.deepEqual(result, [], 'empty folder should not produce a sideloaded toolkit');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 // --- DEFAULT_ASSET_MAPPINGS export ---
 
 test('DEFAULT_ASSET_MAPPINGS is exported and has expected entries', () => {

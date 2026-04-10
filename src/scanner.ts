@@ -47,7 +47,13 @@ export class ToolkitScanner {
         if (toolkit) toolkits.push(toolkit);
       }
     }
-    return toolkits;
+    if (toolkits.length > 0) return toolkits;
+
+    // Sideload fallback: the path is neither a toolkit nor a container of toolkits.
+    // Treat it as a standalone skill folder so users can add individual plugins
+    // directly without needing the full DualPlatform repo structure.
+    const sideloaded = await this.scanAsSideloadedSkill(resolved, enabledToolkits);
+    return sideloaded ? [sideloaded] : [];
   }
 
   private async isDualPlatformToolkit(dirPath: string, mappings: AssetMapping[]): Promise<boolean> {
@@ -56,6 +62,62 @@ export class ToolkitScanner {
       if (await isDirectory(path.join(dirPath, folder))) return true;
     }
     return false;
+  }
+
+  /**
+   * Sideload a standalone skill folder.
+   *
+   * When a user adds a path that isn't a full DualPlatform toolkit repo, the
+   * extension treats the folder itself as a single Claude Code skill. This lets
+   * teams add individual plugin folders (e.g. a local `the-sauce/` dev folder)
+   * without restructuring around copilot/claude/shared subfolders.
+   *
+   * The resulting synthetic toolkit has one asset: the folder itself, typed as
+   * a skill with platform 'claude'. It is registered with Claude Code's plugin
+   * system identically to a skill discovered inside a full toolkit.
+   */
+  private async scanAsSideloadedSkill(
+    folderPath: string,
+    enabledToolkits: Record<string, boolean>,
+  ): Promise<Toolkit | null> {
+    const entries = await this.readDirSafe(folderPath);
+    // Skip if the folder is entirely empty or contains only hidden files.
+    if (!entries.some(e => !e.name.startsWith('.'))) return null;
+
+    const id = toToolkitId(folderPath);
+    const name = path.basename(folderPath);
+
+    let realRoot: string;
+    try {
+      realRoot = (await fs.promises.realpath(folderPath)).replace(/\\/g, '/').toLowerCase();
+    } catch {
+      realRoot = folderPath.replace(/\\/g, '/').toLowerCase();
+    }
+
+    const children = await this.scanFolderContents(
+      folderPath, AssetType.Skill, 'claude', `${id}::${name}`, name,
+      MAX_SCAN_DEPTH - 1, realRoot, new Set(),
+    );
+
+    const asset: Asset = {
+      id: `${id}::${name}`,
+      name,
+      type: AssetType.Skill,
+      sourcePath: folderPath,
+      relativePath: name,
+      isFolder: true,
+      platform: 'claude',
+      children,
+    };
+
+    return {
+      id,
+      name,
+      rootPath: folderPath,
+      format: SourceFormat.DualPlatform,
+      assets: [asset],
+      enabled: enabledToolkits[id] ?? false,
+    };
   }
 
   private async scanToolkit(
