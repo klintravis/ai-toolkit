@@ -223,6 +223,7 @@ export class ClaudeSettingsManager {
       name: 'AI Toolkit',
       description: 'Skills and plugins managed by the AI Toolkit VS Code extension',
       version: '1.0.0',
+      owner: { name: 'AI Toolkit' },
     });
 
     // Register the marketplace in Claude Code's known_marketplaces.json so it
