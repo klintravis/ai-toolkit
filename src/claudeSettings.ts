@@ -197,10 +197,9 @@ export class ClaudeSettingsManager {
       newPluginKeys.push(pluginKey);
     }
 
-    // Ensure ai-toolkit marketplace is registered
-    if (newPluginKeys.length > 0) {
-      await this.ensureMarketplaceRegistered(registryDir, pluginsRoot);
-    }
+    // Ensure ai-toolkit marketplace is registered (always, even when newPluginKeys is empty,
+    // so that disabling all toolkits still writes a valid marketplace.json).
+    await this.ensureMarketplaceRegistered(registryDir, pluginsRoot, newPluginKeys);
 
     await this.setManagedState({
       ...managed,
@@ -212,18 +211,22 @@ export class ClaudeSettingsManager {
     return newPluginKeys;
   }
 
-  private async ensureMarketplaceRegistered(registryDir: string, pluginsRoot: string): Promise<void> {
+  private async ensureMarketplaceRegistered(registryDir: string, pluginsRoot: string, pluginKeys: string[]): Promise<void> {
     // Claude Code expects a .claude-plugin/marketplace.json descriptor inside the
-    // marketplace root directory (pluginsRoot). Without it the marketplace fails to load.
+    // marketplace root directory (pluginsRoot). Name must be kebab-case (no spaces),
+    // and plugins must be an array.
     const marketplaceMetaDir = path.join(pluginsRoot, '.claude-plugin');
     const marketplaceJsonPath = path.join(marketplaceMetaDir, 'marketplace.json');
     await fs.promises.mkdir(marketplaceMetaDir, { recursive: true });
+    // Strip @ai-toolkit suffix to get the bare plugin name each entry uses.
+    const pluginNames = pluginKeys.map(k => k.replace(/@ai-toolkit$/, ''));
     await this.writeJsonAtomic(marketplaceJsonPath, {
       id: 'ai-toolkit',
-      name: 'AI Toolkit',
+      name: 'ai-toolkit',
       description: 'Skills and plugins managed by the AI Toolkit VS Code extension',
       version: '1.0.0',
       owner: { name: 'AI Toolkit' },
+      plugins: pluginNames.map(name => ({ name })),
     });
 
     // Register the marketplace in Claude Code's known_marketplaces.json so it
@@ -344,13 +347,13 @@ export class ClaudeSettingsManager {
    * Falls back to path.basename when id is not tilde-relative (e.g. in tests).
    */
   private pluginName(toolkit: Toolkit): string {
-    if (!toolkit.id.startsWith('~')) {
-      return path.basename(toolkit.rootPath);
-    }
-    return toolkit.id
-      .replace(/^~[/\\]?/, '')          // strip leading ~/
-      .replace(/[/\\]/g, '-')           // slashes → dashes
-      .replace(/[^a-zA-Z0-9._-]/g, '_') // other unsafe chars → underscore
-      || path.basename(toolkit.rootPath); // fallback (shouldn't happen)
+    // Use the toolkit's display name, sanitized for filesystem and plugin key use.
+    // toolkit.name is already the folder basename or manifest name — much shorter
+    // and more readable than building a name from the full tilde-relative path.
+    return toolkit.name
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9._-]/g, '_')
+      || path.basename(toolkit.rootPath).toLowerCase().replace(/[^a-z0-9._-]/g, '_');
   }
 }
