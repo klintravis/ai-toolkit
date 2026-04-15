@@ -39,7 +39,7 @@ Toolkits live in **external folders** on your machine (default `~/.ai-toolkits/`
 git clone https://github.com/klintravis/ai-toolkit.git
 cd ai-toolkit
 npm install
-npm run package          # builds ai-toolkit-0.1.0.vsix
+npm run package          # builds ai-toolkit-<version>.vsix
 ```
 
 Then install the generated `.vsix` as above, or press **F5** to open the Extension Development Host.
@@ -131,7 +131,7 @@ See [docs/claude-code-integration.md](docs/claude-code-integration.md) for how C
 | Prompts | `*.prompt.md` | `chat.promptFilesLocations` |
 | Copilot hooks | subfolder | `chat.hookFilesLocations` |
 | Plugins | subfolder | workspace folder registration |
-| Workflows | `*.md` | workspace folder registration |
+| Workflows | `*.md` | Tree display only (not registered with Copilot) |
 | Standards | subfolder | tree display only |
 | Claude hooks | `*.json` | `~/.claude/settings.json` → `hooks` |
 | MCP servers | `*.json` | `~/.claude/settings.json` → `mcpServers` |
