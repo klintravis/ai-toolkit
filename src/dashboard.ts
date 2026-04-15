@@ -100,8 +100,7 @@ export class DashboardPanel {
     const nonce = getNonce();
     const csp = [
       "default-src 'none'",
-      "style-src 'unsafe-inline' https://fonts.googleapis.com",
-      "font-src https://fonts.gstatic.com",
+      "style-src 'unsafe-inline'",
       `script-src 'nonce-${nonce}'`,
       "img-src data:",
     ].join('; ');
@@ -111,9 +110,6 @@ export class DashboardPanel {
 <meta charset="UTF-8" />
 <meta http-equiv="Content-Security-Policy" content="${csp}" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <title>AI Toolkit</title>
 <style>${STYLES}</style>
 </head>
@@ -236,9 +232,9 @@ const ICO_PLUS = SVG('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12"
 const STYLES = `
 /* ── Design tokens ───────────────────────────────────── */
 :root {
-  --font-display: 'Bricolage Grotesque', 'Segoe UI', system-ui, sans-serif;
-  --font-mono: 'IBM Plex Mono', var(--vscode-editor-font-family, monospace);
-  --font-body: var(--vscode-font-family, system-ui, sans-serif);
+  --font-display: var(--vscode-font-family);
+  --font-mono: var(--vscode-editor-font-family);
+  --font-body: var(--vscode-font-family);
   --radius: 8px;
   --radius-lg: 12px;
   --space-xs: 4px;
