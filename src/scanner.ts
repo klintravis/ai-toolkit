@@ -3,6 +3,13 @@ import * as path from 'path';
 import { pathExists, toToolkitId } from './pathUtils';
 import { Asset, AssetMapping, AssetPlatform, AssetType, SourceFormat, Toolkit, ToolkitManifest } from './types';
 
+/**
+ * Maximum recursive depth when walking a toolkit's asset folders.
+ * This is a DoS guard against symlink loops (a malicious toolkit repo
+ * with circular symlinks could otherwise hang the scanner). Real toolkits
+ * never have legitimate content past depth 5. Not exposed as a setting —
+ * if you need to exceed it, the toolkit layout is probably wrong.
+ */
 const MAX_SCAN_DEPTH = 5;
 const EXCLUDED_FILENAMES = new Set([
   'readme.md', 'changelog.md', 'license.md', 'contributing.md',

@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as os from 'os';
+import * as path from 'path';
 import { ClonedToolkitsStore } from './clonedToolkitsStore';
 import { DashboardHost, DashboardMessage, DashboardPanel, DashboardState } from './dashboard';
 import { CopilotSettingsManager } from './copilotSettings';
@@ -8,8 +10,9 @@ import { expandHomePath, normalizeForComparison, pathExists, toToolkitId } from 
 import { PinManager, PinRecordStore, isInsidePinsDir } from './picks';
 import { ToolkitScanner } from './scanner';
 import { ToolkitTreeProvider } from './treeProvider';
-import { Asset, ClonedToolkitRecord, DEFAULT_PIN_GROUP, PinRecord, Toolkit, ToolkitUpdateStatus } from './types';
+import { Asset, ClonedToolkitRecord, DEFAULT_PIN_GROUP, Toolkit, ToolkitUpdateStatus } from './types';
 import { UpdateChecker } from './updateChecker';
+import { redactCredentials } from './redact';
 
 let scanner: ToolkitScanner;
 let copilotSettings: CopilotSettingsManager;
@@ -20,16 +23,15 @@ let clonedStore: ClonedToolkitsStore;
 let updateChecker: UpdateChecker;
 let pinManager: PinManager;
 let statusBarItem: vscode.StatusBarItem;
-let extensionContext: vscode.ExtensionContext;
 let allToolkits: Toolkit[] = [];
 let activeRefresh: Promise<void> | undefined;
 let outputChannel: vscode.OutputChannel;
 let gitAvailable = true;
 const updateStatusCache = new Map<string, ToolkitUpdateStatus>();
 let updateCheckInterval: NodeJS.Timeout | undefined;
+let startupUpdateCheckTimer: NodeJS.Timeout | null = null;
 
 export function activate(context: vscode.ExtensionContext): void {
-  extensionContext = context;
   outputChannel = vscode.window.createOutputChannel('AI Toolkit');
   scanner = new ToolkitScanner();
   copilotSettings = new CopilotSettingsManager(outputChannel);
@@ -98,16 +100,13 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('aiToolkit.renameGroup', () => renameGroupCommand()),
     vscode.commands.registerCommand('aiToolkit.moveAssetToGroup', (node: { asset?: Asset }) => moveAssetCommand(node)),
     vscode.commands.registerCommand('aiToolkit.openDashboard', () => openDashboard()),
-    vscode.commands.registerCommand('aiToolkit.openPickSource', (record: PinRecord) => {
-      if (record) { openAssetFile(record); }
-    }),
   );
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('aiToolkit.toolkitPaths')) {
         refreshToolkits().catch(err =>
-          outputChannel.appendLine(`Refresh after config change failed: ${err}`)
+          outputChannel.appendLine(`Refresh after config change failed: ${redactCredentials(String(err))}`)
         );
       }
       if (e.affectsConfiguration('aiToolkit.updateCheckIntervalMinutes')) {
@@ -131,21 +130,30 @@ export function activate(context: vscode.ExtensionContext): void {
       // After initial refresh, optionally schedule startup update check.
       const cfg = vscode.workspace.getConfiguration('aiToolkit');
       if (cfg.get<boolean>('checkForUpdatesOnStartup', true)) {
-        setTimeout(() => {
-          checkForUpdates(false).catch(err =>
-            outputChannel.appendLine(`Startup update check failed: ${err}`)
-          );
+        startupUpdateCheckTimer = setTimeout(() => {
+          startupUpdateCheckTimer = null;
+          checkForUpdates(false).catch(err => {
+            try { outputChannel.appendLine(`Startup update check failed: ${redactCredentials(String(err))}`); }
+            catch { /* channel disposed during shutdown race — ignore */ }
+          });
         }, 10_000);
       }
       schedulePeriodicCheck();
     } catch (err) {
-      outputChannel.appendLine(`Initial refresh failed: ${err}`);
+      outputChannel.appendLine(`Initial refresh failed: ${redactCredentials(String(err))}`);
     }
   })();
 }
 
 export function deactivate(): void {
-  if (updateCheckInterval) { clearInterval(updateCheckInterval); }
+  if (startupUpdateCheckTimer !== null) {
+    clearTimeout(startupUpdateCheckTimer);
+    startupUpdateCheckTimer = null;
+  }
+  if (updateCheckInterval !== undefined) {
+    clearInterval(updateCheckInterval);
+    updateCheckInterval = undefined;
+  }
 }
 
 function isAutoConfigEnabled(): boolean {
@@ -438,6 +446,17 @@ async function cloneToolkit(): Promise<void> {
   const cloneParentRaw = config.get<string>('cloneDirectory', '~/.ai-toolkits');
   const cloneParent = expandHomePath(cloneParentRaw);
 
+  const home = os.homedir().replace(/\\/g, '/');
+  const resolved = path.resolve(cloneParent).replace(/\\/g, '/');
+  const resolvedLower = resolved.toLowerCase();
+  const homeLower = home.toLowerCase();
+  if (!resolvedLower.startsWith(homeLower + '/') && resolvedLower !== homeLower) {
+    vscode.window.showErrorMessage(
+      `Clone directory must live under your home folder. Configured: ${resolved}`,
+    );
+    return;
+  }
+
   const controller = new AbortController();
   try {
     const cloneResult = await vscode.window.withProgress(
@@ -488,7 +507,7 @@ async function cloneToolkit(): Promise<void> {
       outputChannel.appendLine('Clone cancelled.');
       return;
     }
-    await showErrorWithLog(`Clone failed: ${getErrorMessage(err)}`);
+    await showErrorWithLog(`Clone failed: ${redactCredentials(getErrorMessage(err))}`);
   }
 }
 
@@ -586,7 +605,7 @@ async function updateToolkitCommand(node: { toolkit?: Toolkit }): Promise<void> 
         outputChannel.show();
       }
     } else {
-      await showErrorWithLog(`Update failed: ${getErrorMessage(err)}`);
+      await showErrorWithLog(`Update failed: ${redactCredentials(getErrorMessage(err))}`);
     }
   }
 }
@@ -612,7 +631,7 @@ async function updateAllToolkits(): Promise<void> {
           updateStatusCache.delete(normalizeForComparison(toolkit.rootPath));
           toolkit.update = undefined;
         } catch (err) {
-          outputChannel.appendLine(`Failed to update ${toolkit.name}: ${getErrorMessage(err)}`);
+          outputChannel.appendLine(`Failed to update ${toolkit.name}: ${redactCredentials(getErrorMessage(err))}`);
         }
       }
     }
@@ -674,7 +693,7 @@ async function pinAssetCommand(node: { asset?: Asset; toolkit?: Toolkit }): Prom
     }
   } catch (err) {
     outputChannel.appendLine(`[pins] pin failed: ${err instanceof Error ? err.stack || err.message : String(err)}`);
-    await showErrorWithLog(`Pin failed: ${getErrorMessage(err)}`);
+    await showErrorWithLog(`Pin failed: ${redactCredentials(getErrorMessage(err))}`);
   }
 }
 
@@ -720,7 +739,7 @@ async function unpinAssetCommand(node: { asset?: Asset }): Promise<void> {
     await pinManager.unpin(record.assetId);
     await refreshToolkits();
   } catch (err) {
-    await showErrorWithLog(`Unpin failed: ${getErrorMessage(err)}`);
+    await showErrorWithLog(`Unpin failed: ${redactCredentials(getErrorMessage(err))}`);
   }
 }
 
@@ -801,7 +820,7 @@ async function promptRenameGroup(oldName: string, existingGroups: string[]): Pro
     await transferEnabledFlag(oldName, newName);
     vscode.window.showInformationMessage(`Renamed "${oldName}" → "${newName}".`);
   } catch (err) {
-    vscode.window.showErrorMessage(`Rename failed: ${err instanceof Error ? err.message : String(err)}`);
+    vscode.window.showErrorMessage(`Rename failed: ${redactCredentials(err instanceof Error ? err.message : String(err))}`);
   }
 }
 
@@ -827,7 +846,7 @@ function openDashboard(): void {
     getState: () => buildDashboardState(),
     handle: async (msg: DashboardMessage) => handleDashboardMessage(msg),
   };
-  DashboardPanel.show(host, extensionContext.extensionUri);
+  DashboardPanel.show(host);
 }
 
 async function buildDashboardState(): Promise<DashboardState> {
@@ -941,7 +960,7 @@ function schedulePeriodicCheck(): void {
   if (minutes > 0) {
     updateCheckInterval = setInterval(() => {
       checkForUpdates(false).catch(err =>
-        outputChannel.appendLine(`Periodic update check failed: ${err}`)
+        outputChannel.appendLine(`Periodic update check failed: ${redactCredentials(String(err))}`)
       );
     }, minutes * 60 * 1000);
   }

@@ -434,3 +434,62 @@ test('sanitizeGroupName rejects . and .. as group names', () => {
   assert.equal(sanitizeGroupName('valid.name'), 'valid.name');
   assert.equal(sanitizeGroupName('a..b'), 'a..b');
 });
+
+test('migrateLegacyLayout - backfills groupName on legacy records', async () => {
+  const picksDir = makeTempDir('migrate-legacy');
+  try {
+    const ctx = fakeContext();
+    // Seed globalState with a legacy record shape that has a group segment in the
+    // path but is missing groupName — exercises the backfill branch.
+    const targetPath = path.join(picksDir, 'default', 'agents', 'a.agent.md');
+    await ctx.globalState.update('aiToolkit.pickedAssets', [
+      {
+        assetId: 'tk1::agents/a.agent.md',
+        toolkitId: 'tk1',
+        toolkitName: 'TK',
+        assetType: 'agents',
+        assetName: 'a.agent.md',
+        sourcePath: path.join(picksDir, 'src', 'a.agent.md'),
+        targetPath,
+        linkType: 'copy',
+        isFolder: false,
+        pinnedAt: '2026-01-01T00:00:00Z',
+        // groupName deliberately absent
+      },
+    ]);
+    const store = new PinRecordStore(ctx);
+    const mgr = new PinManager(store, sink(), () => picksDir);
+    const migrated = await mgr.migrateLegacyLayout();
+    assert.equal(migrated, 1, 'one record should have been migrated');
+    const records = store.list();
+    assert.equal(records.length, 1);
+    assert.ok(records[0].groupName, 'groupName must be populated after migration');
+  } finally {
+    fs.rmSync(picksDir, { recursive: true, force: true });
+  }
+});
+
+test('PinManager.resync - prunes records whose sourcePath has vanished', async () => {
+  const picksRoot = makeTempDir('picks-prune');
+  const sourceDir = makeTempDir('picks-src');
+  try {
+    const store = new PinRecordStore(fakeContext());
+    const mgr = new PinManager(store, sink(), () => picksRoot);
+
+    // Create a real source file, pin it, then delete the source.
+    const sourceFile = path.join(sourceDir, 'x.agent.md');
+    fs.writeFileSync(sourceFile, '# x');
+    const toolkit = buildToolkit({ rootPath: sourceDir });
+    const asset = buildAsset({ sourcePath: sourceFile, id: 'tk1::x.agent.md' });
+    await mgr.pin(asset, toolkit, 'default');
+    assert.equal(store.list().length, 1);
+
+    fs.rmSync(sourceDir, { recursive: true, force: true });
+    await mgr.resync();
+    assert.equal(store.list().length, 0, 'orphaned record should be pruned');
+  } finally {
+    fs.rmSync(picksRoot, { recursive: true, force: true });
+    // sourceDir may already be removed above; ignore errors
+    try { fs.rmSync(sourceDir, { recursive: true, force: true }); } catch { /* already gone */ }
+  }
+});

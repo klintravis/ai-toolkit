@@ -164,11 +164,6 @@
         "command": "aiToolkit.deleteGroupFromTree",
         "title": "Delete Group",
         "category": "AI Toolkit"
-      },
-      {
-        "command": "aiToolkit.openPickSource",
-        "title": "Open Pick Source",
-        "category": "AI Toolkit"
       }
     ],
     "menus": {
@@ -224,11 +219,11 @@
         },
         {
           "command": "aiToolkit.addToWorkspace",
-          "when": "view == aiToolkit.toolkits && viewItem =~ /^toolkit-/"
+          "when": "view == aiToolkit.toolkits && viewItem =~ /^toolkit-(enabled|disabled)-(cloned|external)$/"
         },
         {
           "command": "aiToolkit.removeFromWorkspace",
-          "when": "view == aiToolkit.toolkits && viewItem =~ /^toolkit-/"
+          "when": "view == aiToolkit.toolkits && viewItem =~ /^toolkit-(enabled|disabled)-(cloned|external)$/"
         },
         {
           "command": "aiToolkit.updateToolkit",
@@ -499,7 +494,7 @@
     "clean": "rimraf out",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node --test test/pathUtils.test.js test/scanner.test.js test/clonedToolkitsStore.test.js test/git.test.js test/updateChecker.test.js test/picks.test.js test/claudeSettings.test.js",
+    "test": "npm run compile && node --test test/pathUtils.test.js test/scanner.test.js test/clonedToolkitsStore.test.js test/git.test.js test/updateChecker.test.js test/picks.test.js test/claudeSettings.test.js test/redact.test.js",
     "lint": "eslint src --ext ts && eslint test --ext js",
     "check": "npm run lint && npm test",
     "package": "npx vsce package"

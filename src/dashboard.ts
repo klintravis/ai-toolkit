@@ -45,7 +45,6 @@ export class DashboardPanel {
   private constructor(
     private panel: vscode.WebviewPanel,
     private host: DashboardHost,
-    private extensionUri: vscode.Uri,
   ) {
     this.panel.webview.html = this.render();
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
@@ -56,7 +55,7 @@ export class DashboardPanel {
     );
   }
 
-  static show(host: DashboardHost, extensionUri: vscode.Uri): void {
+  static show(host: DashboardHost): void {
     const column = vscode.ViewColumn.Active;
     if (DashboardPanel.current) {
       DashboardPanel.current.panel.reveal(column);
@@ -70,7 +69,7 @@ export class DashboardPanel {
       { enableScripts: true, retainContextWhenHidden: true }
     );
     panel.iconPath = new vscode.ThemeIcon('dashboard') as unknown as vscode.Uri;
-    DashboardPanel.current = new DashboardPanel(panel, host, extensionUri);
+    DashboardPanel.current = new DashboardPanel(panel, host);
   }
 
   async refresh(): Promise<void> {
@@ -621,7 +620,10 @@ function el(tag, attrs, children) {
       var v = attrs[k];
       if (k === 'class') n.className = v;
       else if (k === 'text') n.textContent = v;
-      else if (k === 'html') n.innerHTML = v;
+      // trustedHtml is a deliberate escape hatch for injecting pre-built string
+      // constants (icons, logos). Callers MUST pass compile-time constants only —
+      // never user input. Renamed from html to make the trust contract explicit.
+      else if (k === 'trustedHtml') n.innerHTML = v;
       else if (k === 'style') n.style.cssText = v;
       else if (k.startsWith('data-')) n.setAttribute(k, String(v));
       else n.setAttribute(k, String(v));
@@ -724,7 +726,7 @@ function statPill(num, label, cls) {
 
 function emptyState(icon, title, desc) {
   return el('div', { class: 'empty-state' }, [
-    el('div', { class: 'empty-icon', html: icon }),
+    el('div', { class: 'empty-icon', trustedHtml: icon }),
     el('p', null, [el('strong', { text: title }), document.createTextNode(' — ' + desc)]),
   ]);
 }
@@ -743,7 +745,7 @@ function toolkitCard(t, index) {
   var assets = el('div', { class: 'tk-assets' });
   Object.entries(t.assetCountsByType).forEach(function(entry) {
     var type = entry[0], n = entry[1];
-    assets.append(el('span', { class: 'tk-asset-chip', html: (ASSET_ICONS[type] || '') + ' ' + n }));
+    assets.append(el('span', { class: 'tk-asset-chip', trustedHtml: (ASSET_ICONS[type] || '') + ' ' + n }));
   });
 
   var toggleCls = 'btn btn-sm btn-toggle ' + (t.enabled ? 'is-on' : '');
@@ -835,7 +837,7 @@ function groupCard(name, picks, toolkits, index) {
 
 function pinCard(p) {
   return el('div', { class: 'pin-card' }, [
-    el('span', { class: 'pin-icon', html: ASSET_ICONS[p.assetType] || '' }),
+    el('span', { class: 'pin-icon', trustedHtml: ASSET_ICONS[p.assetType] || '' }),
     el('div', { class: 'pin-info' }, [
       el('div', { class: 'pin-name', text: p.assetName }),
       el('div', { class: 'pin-meta' }, [
