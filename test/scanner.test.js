@@ -45,6 +45,19 @@ test('scanPath - .github/ legacy CopilotCustomizer format is detected as flat la
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('scanPath - folder with only .github/workflows is not a toolkit (avoids false CI detection)', async () => {
+  const scanner = new ToolkitScanner();
+  const dir = makeTempDir('ci-only');
+  try {
+    fs.mkdirSync(path.join(dir, '.github', 'workflows'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.github', 'workflows', 'ci.yml'), 'name: ci');
+    // Even with a stray .md file, a workflows-only layout must not register as a toolkit.
+    fs.writeFileSync(path.join(dir, '.github', 'workflows', 'stray.md'), '# stray');
+    const result = await scanner.scanPath(dir, {});
+    assert.deepEqual(result, [], 'workflows-only folder must not classify as a toolkit');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 // --- DualPlatform detection ---
 
 test('scanPath - detects DualPlatform via copilot/ subfolder', async () => {

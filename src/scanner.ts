@@ -145,7 +145,14 @@ export class ToolkitScanner {
   }
 
   private async isFlatLayoutToolkit(dirPath: string): Promise<boolean> {
+    // `workflows` / `.github/workflows` alone is not enough to classify a folder
+    // as a flat-layout toolkit — virtually every GitHub repo has a CI workflows
+    // directory, so matching on it produces false positives when the user points
+    // the scanner at an ordinary container of repos. We require at least one
+    // primary asset folder (agents, instructions, prompts, plugins, commands,
+    // skills, hooks, mcps, standards, docs) to match.
     for (const mapping of FLAT_ASSET_MAPPINGS) {
+      if (mapping.folder === 'workflows' || mapping.folder === '.github/workflows') continue;
       if (await isDirectory(path.join(dirPath, mapping.folder))) return true;
     }
     return false;
