@@ -399,6 +399,70 @@ test('applyToolkits - applying twice is idempotent (EEXIST handled, paths tracke
   } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
 });
 
+test('applyToolkits - sideloaded plugin links native dirs under plugins path', async () => {
+  const root = makeTempDir('plugin-sideload');
+  const pluginsPath = path.join(root, 'plugins');
+  const registryPath = path.join(root, 'registry');
+  const settingsPath = path.join(root, 'settings.json');
+
+  // Source plugin: a folder with .claude-plugin/plugin.json and native subdirs
+  const src = path.join(root, 'src-plugin');
+  fs.mkdirSync(path.join(src, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(
+    path.join(src, '.claude-plugin', 'plugin.json'),
+    JSON.stringify({ name: 'my-plugin' }),
+  );
+  // Create a skill dir that will be passed as an asset
+  const skillDir = path.join(src, 'skills', 'main-skill');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# skill');
+  // Create native dirs (agents, commands, hooks) to be linked
+  for (const sub of ['agents', 'commands', 'hooks']) {
+    fs.mkdirSync(path.join(src, sub), { recursive: true });
+    fs.writeFileSync(path.join(src, sub, 'placeholder.md'), '# x');
+  }
+
+  const ctx = makeContext();
+  const mgr = new ClaudeSettingsManager(
+    ctx,
+    makeLog(),
+    () => settingsPath,
+    () => pluginsPath,
+    () => registryPath,
+  );
+
+  try {
+    const toolkit = {
+      id: `~/${path.basename(src)}`,
+      name: path.basename(src),
+      rootPath: src,
+      format: 'sideloaded',
+      assets: [makeAsset(AssetType.Skill, 'both', 'main-skill', skillDir, true)],
+      enabled: true,
+      isPlugin: true,
+    };
+    await mgr.applyToolkits([toolkit]);
+
+    // After applying, the plugins dir should contain a linked plugin folder
+    // with the native subdirs present (symlink, junction, or copy — all OK).
+    const linkedRoot = path.join(pluginsPath, 'my-plugin');
+    assert.ok(fs.existsSync(linkedRoot), 'plugin linked root missing');
+    for (const sub of ['agents', 'commands', 'hooks']) {
+      assert.ok(
+        fs.existsSync(path.join(linkedRoot, sub)),
+        `expected native dir ${sub} to be linked`,
+      );
+    }
+    // Skill should be linked under skills/
+    assert.ok(
+      fs.existsSync(path.join(linkedRoot, 'skills', 'main-skill')),
+      'skill should be linked under skills/',
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // --- Corrupt registry resilience ---
 
 test('applyToolkits - corrupt installed_plugins.json does not throw', async () => {
@@ -443,6 +507,25 @@ test('applyToolkits - hook command outside toolkit root is rejected', async () =
     assert.equal(hooks.length, 0, 'Hook with escaped command must not be written to settings');
     assert.ok(log.lines.some(l => l.includes('outside toolkit root')), 'Must log rejection reason');
   } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
+});
+
+test('sanitizePluginName - rejects dot-only names', async () => {
+  const ctx = makeContext();
+  const mgr = new ClaudeSettingsManager(
+    ctx,
+    makeLog(),
+    () => '/tmp/s.json',
+    () => '/tmp/p',
+    () => '/tmp/r',
+  );
+  // Toolkit id `~/..` → after stripping `~/` → `..` → sanitized to `..` →
+  // dot-only → rejected → fall through to 'toolkit'.
+  const cache = new Map();
+  const name = await mgr.pluginName(
+    { id: '~/..', rootPath: '/nonexistent', name: '..', assets: [], format: 'sideloaded', enabled: true },
+    cache,
+  );
+  assert.equal(name, 'toolkit');
 });
 
 test('applyToolkits - hook with missing command field is skipped silently', async () => {

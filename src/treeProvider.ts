@@ -26,7 +26,7 @@ export interface OverviewNode {
 export interface SectionNode {
   kind: 'section';
   label: string;
-  id: 'toolkits' | 'groups';
+  id: 'toolkits' | 'plugins' | 'groups';
   toolkits: Toolkit[];
 }
 
@@ -51,18 +51,17 @@ export interface AssetNode {
   asset: Asset;
   toolkit: Toolkit;
   toolkitEnabled: boolean;
-  nested: boolean;
 }
 
 const ASSET_TYPE_LABELS = new Map<string, string>([
   ['agents', 'Agents'], ['instructions', 'Instructions'], ['skills', 'Skills'],
-  ['prompts', 'Prompts'], ['plugins', 'Plugins'], ['hooks', 'Hooks'],
+  ['prompts', 'Prompts'], ['plugins', 'Plugins'], ['commands', 'Commands'], ['hooks', 'Hooks'],
   ['workflows', 'Workflows'], ['standards', 'Standards'], ['mcps', 'MCP Servers'], ['docs', 'Docs'],
 ]);
 
 const ASSET_TYPE_ICONS = new Map<string, string>([
   ['agents', 'robot'], ['instructions', 'book'], ['skills', 'tools'],
-  ['prompts', 'comment-discussion'], ['plugins', 'extensions'], ['hooks', 'zap'],
+  ['prompts', 'comment-discussion'], ['plugins', 'extensions'], ['commands', 'terminal'], ['hooks', 'zap'],
   ['workflows', 'play-circle'], ['standards', 'law'], ['mcps', 'plug'], ['docs', 'file-text'],
 ]);
 
@@ -146,18 +145,19 @@ export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
           kind: 'asset' as const,
           asset, toolkit: element.toolkit,
           toolkitEnabled: element.toolkitEnabled,
-          nested: false,
         }));
-      case 'asset':
-        if (element.asset.isFolder && element.asset.children && element.asset.children.length > 0) {
-          return element.asset.children.map(child => ({
+      case 'asset': {
+        const asset = element.asset;
+        if (asset.isFolder && asset.children) {
+          return asset.children.map(child => ({
             kind: 'asset' as const,
-            asset: child, toolkit: element.toolkit,
+            asset: child,
+            toolkit: element.toolkit,
             toolkitEnabled: element.toolkitEnabled,
-            nested: true,
           }));
         }
         return [];
+      }
     }
   }
 
@@ -175,12 +175,16 @@ export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
       updatesAvailable: this.summary.updatesAvailable,
     });
 
-    // Partition toolkits into pick-groups vs regular.
+    // Partition toolkits into plugins, pick-groups, and regular.
+    const plugins = this.toolkits.filter(t => t.isPlugin && !t.isPinGroup);
     const groups = this.toolkits.filter(t => t.isPinGroup);
-    const regular = this.toolkits.filter(t => !t.isPinGroup);
+    const regular = this.toolkits.filter(t => !t.isPinGroup && !t.isPlugin);
 
     if (regular.length > 0) {
       nodes.push({ kind: 'section', label: 'Toolkits', id: 'toolkits', toolkits: regular });
+    }
+    if (plugins.length > 0) {
+      nodes.push({ kind: 'section', label: 'Plugins', id: 'plugins', toolkits: plugins });
     }
     if (groups.length > 0) {
       nodes.push({ kind: 'section', label: 'Pick Groups', id: 'groups', toolkits: groups });
@@ -209,7 +213,8 @@ export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
     const item = new vscode.TreeItem(node.label, vscode.TreeItemCollapsibleState.Expanded);
     const enabled = node.toolkits.filter(t => t.enabled).length;
     item.description = `${enabled}/${node.toolkits.length}`;
-    item.iconPath = new vscode.ThemeIcon(node.id === 'groups' ? 'pinned' : 'library');
+    const sectionIcon = node.id === 'groups' ? 'pinned' : node.id === 'plugins' ? 'extensions' : 'library';
+    item.iconPath = new vscode.ThemeIcon(sectionIcon);
     item.contextValue = `section-${node.id}`;
     return item;
   }
@@ -248,6 +253,7 @@ export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
       tk.enabled ? 'Enabled for Copilot discovery' : 'Disabled',
     ];
     if (tk.isPinGroup) { toolTipLines.push('Type: Pick group'); }
+    else if (tk.isPlugin) { toolTipLines.push('Type: Claude Code plugin'); }
     else if (tk.isCloned) { toolTipLines.push('Type: Cloned from GitHub'); }
     else { toolTipLines.push('Type: Local folder'); }
     toolTipLines.push(tk.rootPath);
@@ -267,6 +273,7 @@ export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 
   private getToolkitIcon(tk: Toolkit): string {
     if (tk.isPinGroup) { return tk.enabled ? 'pinned' : 'pin'; }
+    if (tk.isPlugin) { return 'extensions'; }
     if (tk.isCloned) { return tk.update?.updateAvailable ? 'cloud-download' : 'cloud'; }
     return 'folder-library';
   }
@@ -280,23 +287,21 @@ export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
 
   private getAssetItem(node: AssetNode): vscode.TreeItem {
     const asset = node.asset;
-    const hasChildren = asset.isFolder && !!asset.children && asset.children.length > 0;
-    const collapsibleState = hasChildren
+    const hasChildren = asset.isFolder && Array.isArray(asset.children) && asset.children.length > 0;
+    const state = hasChildren
       ? vscode.TreeItemCollapsibleState.Collapsed
       : vscode.TreeItemCollapsibleState.None;
-    const item = new vscode.TreeItem(asset.name, collapsibleState);
+    const item = new vscode.TreeItem(asset.name, state);
     item.tooltip = asset.sourcePath;
 
-    // Determine pinned state — top-level only.
-    const pinRecord = !node.nested ? this.pinProvider?.findPinRecord(asset) : undefined;
+    const pinRecord = this.pinProvider?.findPinRecord(asset);
     const isPinned = !!pinRecord;
 
     const base = node.toolkitEnabled ? 'asset-enabled' : 'asset-disabled';
     const pinnedSuffix = isPinned ? '-pinned' : '';
-    const nestedSuffix = node.nested ? '-nested' : '';
-    item.contextValue = `${base}${pinnedSuffix}${nestedSuffix}`;
+    item.contextValue = `${base}${pinnedSuffix}`;
 
-    if (!asset.isFolder) {
+    if (!hasChildren) {
       item.command = {
         command: 'aiToolkit.openAsset',
         title: 'Open Asset',
@@ -304,9 +309,8 @@ export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
       };
     }
 
-    const badge = !node.nested ? getPlatformBadge(asset.platform) : '';
+    const badge = getPlatformBadge(asset.platform);
     const descParts: string[] = [];
-    if (hasChildren) { descParts.push(`${asset.children!.length}`); }
     if (isPinned) { descParts.push(`📌 ${pinRecord!.groupName}`); }
     if (badge) { descParts.push(badge); }
     if (descParts.length > 0) { item.description = descParts.join(' · '); }
@@ -326,13 +330,16 @@ export class ToolkitTreeProvider implements vscode.TreeDataProvider<TreeNode>, v
    * they share the same asset type string ('hooks').
    */
   private groupByFolder(assets: Asset[]): Map<string, { type: AssetType; assets: Asset[] }> {
+    const PLATFORM_PREFIXES = new Set(['copilot', 'claude', 'shared']);
     const grouped = new Map<string, { type: AssetType; assets: Asset[] }>();
     for (const asset of assets) {
       const parts = asset.relativePath.replace(/\\/g, '/').split('/');
-      // For DualPlatform assets the first two segments are "platform/type" (e.g. "claude/skills").
-      // For sideloaded assets relativePath is just the skill name (one segment) — fall back to
-      // asset.type so they still land in the correct labelled group with the right icon.
-      const folderPath = parts.length >= 2 ? `${parts[0]}/${parts[1]}` : asset.type;
+      // Only keep separate groups for true platform prefixes (DualPlatform layout).
+      // Everything else — flat layout, .github/ legacy, plugin layout — collapses
+      // by asset type so e.g. agents/ and .github/agents/ merge into one "Agents".
+      const folderPath = parts.length >= 2 && PLATFORM_PREFIXES.has(parts[0])
+        ? `${parts[0]}/${parts[1]}`
+        : asset.type;
       if (!grouped.has(folderPath)) {
         grouped.set(folderPath, { type: asset.type, assets: [] });
       }

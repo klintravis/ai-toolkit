@@ -34,14 +34,25 @@ export class ClaudeSettingsManager {
   async applyToolkits(toolkits: Toolkit[]): Promise<void> {
     const enabled = toolkits.filter(t => t.enabled);
     const managed = this.getManagedState();
+    const pluginNameCache = new Map<string, string>();
     // Run both sub-operations before persisting state so that a failure in either
     // one does not leave managed state partially updated.
-    const pluginState = await this.applySkillPlugins(enabled, managed);
-    const hookState = await this.applyHooksAndMcps(enabled, managed.managedPluginKeys ?? [], pluginState.managedPluginKeys);
+    const pluginState = await this.applySkillPlugins(enabled, managed, pluginNameCache);
+    const hookState = await this.applyHooksAndMcps(
+      enabled,
+      managed.managedPluginKeys ?? [],
+      pluginState.managedPluginKeys,
+      pluginNameCache,
+    );
     await this.setManagedState({ ...managed, ...pluginState, ...hookState });
   }
 
-  private async applyHooksAndMcps(toolkits: Toolkit[], oldPluginKeys: string[], newPluginKeys: string[]): Promise<Pick<ClaudeManagedState, 'managedHookCommands' | 'managedMcpKeys'>> {
+  private async applyHooksAndMcps(
+    toolkits: Toolkit[],
+    oldPluginKeys: string[],
+    newPluginKeys: string[],
+    pluginNameCache: Map<string, string>,
+  ): Promise<Pick<ClaudeManagedState, 'managedHookCommands' | 'managedMcpKeys'>> {
     const settingsPath = expandHomePath(this.getSettingsPath());
     const current = await this.readSettings(settingsPath);
     if (current === null) {
@@ -71,6 +82,13 @@ export class ClaudeSettingsManager {
       delete current.mcpServers;
     }
 
+    // Contract for enabledPlugins cleanup:
+    //   - oldPluginKeys comes from managedPluginKeys persisted in globalState
+    //     from the previous apply. Only entries we added in a prior run are
+    //     removed — user-defined entries survive untouched.
+    //   - newPluginKeys is the fresh set produced by this apply run.
+    //   - First-run / cleared-globalState case: oldPluginKeys is empty, so
+    //     nothing user-defined can be accidentally purged.
     // Manage enabledPlugins: remove old managed keys, add new ones.
     // Preserves any user-defined plugin entries.
     const enabledPlugins: Record<string, boolean> =
@@ -89,7 +107,7 @@ export class ClaudeSettingsManager {
     const newMcpKeys: string[] = [];
 
     for (const toolkit of toolkits) {
-      const tkName = this.pluginName(toolkit);
+      const tkName = await this.pluginName(toolkit, pluginNameCache);
 
       for (const asset of toolkit.assets) {
         if (asset.type === AssetType.Hook && (asset.platform === 'claude' || asset.platform === 'both') && !asset.isFolder) {
@@ -144,7 +162,7 @@ export class ClaudeSettingsManager {
     return { managedHookCommands: newHookCommands, managedMcpKeys: newMcpKeys };
   }
 
-  private async applySkillPlugins(toolkits: Toolkit[], managed: ClaudeManagedState): Promise<Pick<ClaudeManagedState, 'managedPluginPaths' | 'managedPluginDirs' | 'managedPluginKeys'>> {
+  private async applySkillPlugins(toolkits: Toolkit[], managed: ClaudeManagedState, pluginNameCache: Map<string, string>): Promise<Pick<ClaudeManagedState, 'managedPluginPaths' | 'managedPluginDirs' | 'managedPluginKeys'>> {
     const pluginsRoot = expandHomePath(this.getPluginsPath());
     const registryDir = expandHomePath(this.getPluginsRegistryPath());
 
@@ -171,7 +189,7 @@ export class ClaudeSettingsManager {
       );
       if (skillAssets.length === 0) continue;
 
-      const tkName = this.pluginName(toolkit);
+      const tkName = await this.pluginName(toolkit, pluginNameCache);
       // Plugin directory is a direct child of pluginsRoot so that installPath
       // is a direct child of installLocation — Claude Code validates this relationship.
       const pluginDir = path.join(pluginsRoot, tkName);
@@ -408,21 +426,53 @@ export class ClaudeSettingsManager {
    * two toolkits with the same folder name in different parent directories get
    * distinct plugin names ("work-company-my-toolkit" vs "personal-my-toolkit").
    * Falls back to path.basename when id is not tilde-relative (e.g. in tests).
+   * Results are cached in `cache` to avoid duplicate I/O per applyToolkits call.
    */
-  private pluginName(toolkit: Toolkit): string {
-    // Derive a unique, filesystem-safe name from the toolkit's stable ID.
+  private async pluginName(
+    toolkit: Toolkit,
+    cache: Map<string, string>,
+  ): Promise<string> {
+    const cached = cache.get(toolkit.rootPath);
+    if (cached !== undefined) return cached;
+
+    // If the plugin already declares a name in its own .claude-plugin/plugin.json,
+    // honor it — the author has chosen the canonical name and we shouldn't override.
+    const manifest = await this.readJson<{ name?: unknown }>(
+      path.join(toolkit.rootPath, '.claude-plugin', 'plugin.json')
+    );
+    if (manifest && typeof manifest.name === 'string' && manifest.name.trim()) {
+      const sanitized = this.sanitizePluginName(manifest.name);
+      if (sanitized) {
+        cache.set(toolkit.rootPath, sanitized);
+        return sanitized;
+      }
+    }
+
+    // Fall back to a unique, filesystem-safe name derived from the toolkit's stable ID.
     // In production toolkit.id is always tilde-relative (~/work/company/my-toolkit)
     // so stripping ~/ and replacing separators gives "work-company-my-toolkit".
     // For absolute-path IDs (e.g. in tests) we sanitize the full path for uniqueness.
-    const raw = toolkit.id.startsWith('~/')
-      ? toolkit.id.slice(2)           // strip leading ~/
-      : toolkit.id;                   // absolute path — use full path for uniqueness
-    return raw
+    const raw = toolkit.id.startsWith('~/') ? toolkit.id.slice(2) : toolkit.id;
+    const resolved = this.sanitizePluginName(raw) || 'toolkit';
+    cache.set(toolkit.rootPath, resolved);
+    return resolved;
+  }
+
+  /**
+   * Sanitize a plugin name to be filesystem-safe. Defense in depth against
+   * path traversal: collapses `/` and `\` to `-`, strips `:`, replaces
+   * whitespace with `-`, and replaces anything outside `[a-z0-9._-]` with `_`.
+   * Rejects inputs that are empty or consist entirely of dots (e.g. `..`).
+   */
+  private sanitizePluginName(value: string): string {
+    const cleaned = value
       .toLowerCase()
-      .replace(/[\\/]/g, '-')         // path separators → hyphens
-      .replace(/:/g, '')              // strip Windows drive colons (C: → c)
+      .replace(/[\\/]/g, '-')
+      .replace(/:/g, '')
       .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9._-]/g, '_')
-      || 'toolkit';
+      .replace(/[^a-z0-9._-]/g, '_');
+    // Reject empty or dot-only names to avoid `.`, `..`, `...` etc.
+    if (!cleaned || /^\.+$/.test(cleaned)) return '';
+    return cleaned;
   }
 }

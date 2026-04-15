@@ -1,4 +1,3 @@
-import * as path from 'path';
 import * as vscode from 'vscode';
 import { ClonedToolkitsStore } from './clonedToolkitsStore';
 import { DashboardHost, DashboardMessage, DashboardPanel, DashboardState } from './dashboard';
@@ -185,32 +184,6 @@ async function refreshToolkits(): Promise<void> {
   }
 }
 
-async function warnIfOldFormatToolkits(toolkitPaths: string[], discoveredCount: number): Promise<void> {
-  if (discoveredCount > 0) return;
-  const OLD_FORMAT_INDICATORS = ['agents', 'instructions', 'skills', 'prompts'];
-  for (const rawPath of toolkitPaths) {
-    const tkPath = expandHomePath(rawPath);
-    for (const folder of OLD_FORMAT_INDICATORS) {
-      if (await pathExists(path.join(tkPath, folder))) {
-        void vscode.window.showWarningMessage(
-          `AI Toolkit: "${path.basename(rawPath)}" uses the old format. Migrate to copilot/ and claude/ subfolders to use the new DualPlatform format.`,
-          'Learn More',
-        );
-        return;
-      }
-    }
-    const githubDir = path.join(tkPath, '.github');
-    for (const folder of OLD_FORMAT_INDICATORS) {
-      if (await pathExists(path.join(githubDir, folder))) {
-        void vscode.window.showWarningMessage(
-          `AI Toolkit: "${path.basename(rawPath)}" uses the old .github/ format. Migrate to the new DualPlatform layout.`,
-          'Learn More',
-        );
-        return;
-      }
-    }
-  }
-}
 
 async function scanAndApplyToolkits(): Promise<void> {
   const config = vscode.workspace.getConfiguration('aiToolkit');
@@ -247,7 +220,6 @@ async function scanAndApplyToolkits(): Promise<void> {
   }
 
   allToolkits = discovered;
-  await warnIfOldFormatToolkits(toolkitPaths, discovered.length);
   treeProvider.setToolkits(toolkitsBySource);
   updateStatusBarAndTree();
 

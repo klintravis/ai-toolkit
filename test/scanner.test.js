@@ -32,13 +32,16 @@ test('scanPath - empty dir returns empty array', async () => {
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('scanPath - old .github/ format returns empty array (retired format)', async () => {
+test('scanPath - .github/ legacy CopilotCustomizer format is detected as flat layout', async () => {
   const scanner = new ToolkitScanner();
-  const dir = makeTempDir('old-github');
+  const dir = makeTempDir('github-flat');
   try {
     fs.mkdirSync(path.join(dir, '.github', 'agents'), { recursive: true });
     fs.writeFileSync(path.join(dir, '.github', 'agents', 'test.agent.md'), '# test');
-    assert.deepEqual(await scanner.scanPath(dir, {}), [], 'Old .github format should not be detected');
+    const result = await scanner.scanPath(dir, {});
+    assert.equal(result.length, 1);
+    assert.equal(result[0].assets.length, 1);
+    assert.equal(result[0].assets[0].type, AssetType.Agent);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -408,7 +411,7 @@ test('scanPath - sideloads a plain skill folder with no DualPlatform structure',
     assert.equal(tk.assets.length, 1);
     const asset = tk.assets[0];
     assert.equal(asset.type, AssetType.Skill);
-    assert.equal(asset.platform, 'claude');
+    assert.equal(asset.platform, 'both');
     assert.equal(asset.isFolder, true);
     assert.equal(asset.sourcePath, dir);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -424,6 +427,33 @@ test('scanPath - sideloaded skill exposes children', async () => {
     const result = await scanner.scanPath(dir, {});
     const asset = result[0]?.assets[0];
     assert.ok(asset?.children && asset.children.length > 0, 'children should be scanned');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('scanPath - sideloads a Claude Code plugin as a toolkit broken down by asset type', async () => {
+  const scanner = new ToolkitScanner();
+  const dir = makeTempDir('sideload-plugin');
+  try {
+    fs.mkdirSync(path.join(dir, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.claude-plugin', 'plugin.json'), '{"name":"my-plugin"}');
+    fs.mkdirSync(path.join(dir, 'skills', 'one'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'skills', 'one', 'SKILL.md'), '# one');
+    fs.mkdirSync(path.join(dir, 'skills', 'two'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'skills', 'two', 'SKILL.md'), '# two');
+    fs.mkdirSync(path.join(dir, 'agents'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'agents', 'reviewer.md'), '# r');
+    fs.mkdirSync(path.join(dir, 'commands'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'commands', 'deploy.md'), '# d');
+    fs.mkdirSync(path.join(dir, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'hooks', 'pre.json'), '{}');
+    const result = await scanner.scanPath(dir, {});
+    assert.equal(result.length, 1);
+    const tk = result[0];
+    assert.equal(tk.isPlugin, true);
+    const types = tk.assets.map(a => a.type).sort();
+    assert.deepEqual(types, ['agents', 'commands', 'hooks', 'skills', 'skills']);
+    const skills = tk.assets.filter(a => a.type === AssetType.Skill);
+    assert.ok(skills.every(s => s.isFolder));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -455,7 +485,7 @@ test('scanPath - sideloads individual skills from skills/ subdirectory', async (
     assert.deepEqual(names, ['Brainstorming', 'Writing Plans']);
     for (const asset of tk.assets) {
       assert.equal(asset.type, AssetType.Skill);
-      assert.equal(asset.platform, 'claude');
+      assert.equal(asset.platform, 'both');
       assert.equal(asset.isFolder, true);
       // sourcePath must point to the individual skill dir, not the toolkit root
       assert.ok(asset.sourcePath.endsWith('brainstorming') || asset.sourcePath.endsWith('writing-plans'));
@@ -473,6 +503,29 @@ test('scanPath - sideload with empty skills/ subdirectory falls back to whole-fo
     assert.equal(result.length, 1);
     assert.equal(result[0].assets.length, 1);
     assert.equal(result[0].assets[0].sourcePath, dir, 'falls back to whole-folder skill');
+    assert.equal(result[0].assets[0].platform, 'both');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('scanPath - container dir with multiple flat-layout toolkits discovers each', async () => {
+  const scanner = new ToolkitScanner();
+  const dir = makeTempDir('flat-container');
+  try {
+    fs.mkdirSync(path.join(dir, 'kit-a', 'agents'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'kit-a', 'agents', 'one.agent.md'), '# one');
+    fs.mkdirSync(path.join(dir, 'kit-b', 'agents'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'kit-b', 'agents', 'two.agent.md'), '# two');
+    const result = await scanner.scanPath(dir, {});
+    assert.equal(result.length, 2, 'expected both kits to be discovered');
+    const names = result.map(t => t.name).sort();
+    assert.deepEqual(names, ['kit-a', 'kit-b']);
+    for (const tk of result) {
+      assert.equal(tk.format, SourceFormat.Sideloaded);
+      assert.equal(tk.assets.length, 1);
+      assert.equal(tk.assets[0].type, AssetType.Agent);
+    }
+    // IDs must be distinct.
+    assert.notEqual(result[0].id, result[1].id);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
