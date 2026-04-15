@@ -311,28 +311,139 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["folder", "assetType", "platform"],
+            "required": [
+              "folder",
+              "assetType",
+              "platform"
+            ],
             "properties": {
-              "folder": { "type": "string", "description": "Relative path from toolkit root, e.g. \"claude/skills\"" },
-              "assetType": { "type": "string", "description": "Asset type identifier, e.g. \"skills\" or \"mcps\"" },
-              "platform": { "type": "string", "enum": ["copilot", "claude", "both", "shared"] },
-              "isFolder": { "type": "boolean", "description": "Each subdir is a folder asset when true; walk for files when false" },
-              "extensions": { "type": "array", "items": { "type": "string" }, "description": "File extensions to accept, e.g. [\".agent.md\"]" }
+              "folder": {
+                "type": "string",
+                "description": "Relative path from toolkit root, e.g. \"claude/skills\""
+              },
+              "assetType": {
+                "type": "string",
+                "description": "Asset type identifier, e.g. \"skills\" or \"mcps\""
+              },
+              "platform": {
+                "type": "string",
+                "enum": [
+                  "copilot",
+                  "claude",
+                  "both",
+                  "shared"
+                ]
+              },
+              "isFolder": {
+                "type": "boolean",
+                "description": "Each subdir is a folder asset when true; walk for files when false"
+              },
+              "extensions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "File extensions to accept, e.g. [\".agent.md\"]"
+              }
             }
           },
           "default": [
-            { "folder": "copilot/agents",       "assetType": "agents",       "platform": "copilot", "isFolder": false, "extensions": [".agent.md"] },
-            { "folder": "copilot/instructions", "assetType": "instructions", "platform": "copilot", "isFolder": false, "extensions": [".instructions.md"] },
-            { "folder": "copilot/prompts",      "assetType": "prompts",      "platform": "copilot", "isFolder": false, "extensions": [".prompt.md"] },
-            { "folder": "copilot/plugins",      "assetType": "plugins",      "platform": "copilot", "isFolder": true },
-            { "folder": "copilot/hooks",        "assetType": "hooks",        "platform": "copilot", "isFolder": true },
-            { "folder": "copilot/workflows",    "assetType": "workflows",    "platform": "copilot", "isFolder": false, "extensions": [".md"] },
-            { "folder": "claude/skills",        "assetType": "skills",       "platform": "both",    "isFolder": true },
-            { "folder": "claude/hooks",         "assetType": "hooks",        "platform": "claude",  "isFolder": false, "extensions": [".json"] },
-            { "folder": "claude/mcps",          "assetType": "mcps",         "platform": "claude",  "isFolder": false, "extensions": [".json"] },
-            { "folder": "claude/instructions",  "assetType": "instructions", "platform": "claude",  "isFolder": false, "extensions": [".md"] },
-            { "folder": "shared/standards",     "assetType": "standards",    "platform": "shared",  "isFolder": true },
-            { "folder": "shared/docs",          "assetType": "docs",         "platform": "shared",  "isFolder": false, "extensions": [".md"] }
+            {
+              "folder": "copilot/agents",
+              "assetType": "agents",
+              "platform": "copilot",
+              "isFolder": false,
+              "extensions": [
+                ".agent.md"
+              ]
+            },
+            {
+              "folder": "copilot/instructions",
+              "assetType": "instructions",
+              "platform": "copilot",
+              "isFolder": false,
+              "extensions": [
+                ".instructions.md"
+              ]
+            },
+            {
+              "folder": "copilot/prompts",
+              "assetType": "prompts",
+              "platform": "copilot",
+              "isFolder": false,
+              "extensions": [
+                ".prompt.md"
+              ]
+            },
+            {
+              "folder": "copilot/plugins",
+              "assetType": "plugins",
+              "platform": "copilot",
+              "isFolder": true
+            },
+            {
+              "folder": "copilot/hooks",
+              "assetType": "hooks",
+              "platform": "copilot",
+              "isFolder": true
+            },
+            {
+              "folder": "copilot/workflows",
+              "assetType": "workflows",
+              "platform": "copilot",
+              "isFolder": false,
+              "extensions": [
+                ".md"
+              ]
+            },
+            {
+              "folder": "claude/skills",
+              "assetType": "skills",
+              "platform": "both",
+              "isFolder": true
+            },
+            {
+              "folder": "claude/hooks",
+              "assetType": "hooks",
+              "platform": "claude",
+              "isFolder": false,
+              "extensions": [
+                ".json"
+              ]
+            },
+            {
+              "folder": "claude/mcps",
+              "assetType": "mcps",
+              "platform": "claude",
+              "isFolder": false,
+              "extensions": [
+                ".json"
+              ]
+            },
+            {
+              "folder": "claude/instructions",
+              "assetType": "instructions",
+              "platform": "claude",
+              "isFolder": false,
+              "extensions": [
+                ".md"
+              ]
+            },
+            {
+              "folder": "shared/standards",
+              "assetType": "standards",
+              "platform": "shared",
+              "isFolder": true
+            },
+            {
+              "folder": "shared/docs",
+              "assetType": "docs",
+              "platform": "shared",
+              "isFolder": false,
+              "extensions": [
+                ".md"
+              ]
+            }
           ],
           "markdownDescription": "Asset folder-to-platform mappings. Edit to add new asset types or remap folders without code changes."
         },
@@ -340,11 +451,20 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "url"],
+            "required": [
+              "name",
+              "url"
+            ],
             "properties": {
-              "name": { "type": "string" },
-              "url": { "type": "string" },
-              "description": { "type": "string" }
+              "name": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
             }
           },
           "default": [
@@ -375,7 +495,8 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run clean && npm run compile",
+    "clean": "rimraf out",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "test": "npm run compile && node --test test/pathUtils.test.js test/scanner.test.js test/clonedToolkitsStore.test.js test/git.test.js test/updateChecker.test.js test/picks.test.js test/claudeSettings.test.js",
@@ -388,8 +509,9 @@
     "@types/vscode": "^1.96.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
+    "@vscode/vsce": "^2.22.0",
     "eslint": "^8.56.0",
-    "typescript": "^5.3.0",
-    "@vscode/vsce": "^2.22.0"
+    "rimraf": "^6.1.3",
+    "typescript": "^5.3.0"
   }
 }
