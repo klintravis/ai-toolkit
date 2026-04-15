@@ -494,7 +494,7 @@
     "clean": "rimraf out",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node --test test/pathUtils.test.js test/scanner.test.js test/clonedToolkitsStore.test.js test/git.test.js test/updateChecker.test.js test/picks.test.js test/claudeSettings.test.js test/redact.test.js",
+    "test": "npm run compile && node --test test/pathUtils.test.js test/scanner.test.js test/clonedToolkitsStore.test.js test/git.test.js test/updateChecker.test.js test/picks.test.js test/claudeSettings.test.js test/redact.test.js test/extension.test.js test/copilotSettings.test.js test/treeProvider.test.js test/dashboard.test.js",
     "lint": "eslint src --ext ts && eslint test --ext js",
     "check": "npm run lint && npm test",
     "package": "npx vsce package"
