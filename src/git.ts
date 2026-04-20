@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { pathExists } from './pathUtils';
+import { redactCredentials } from './redact';
 
 export type GitErrorCode =
   | 'GIT_NOT_INSTALLED'
@@ -272,13 +273,7 @@ export function isValidRemoteUrl(input: string): boolean {
   return false;
 }
 
-/** Scrub embedded credentials from URLs in log text. */
-export function redactCredentials(text: string): string {
-  return text.replace(/https?:\/\/[^@\s]+@/g, match => {
-    const scheme = match.startsWith('https') ? 'https' : 'http';
-    return `${scheme}://***@`;
-  });
-}
+export { redactCredentials } from './redact';
 
 /** Classify a git error from stderr into a typed GitError. */
 function classifyGitError(operation: 'clone' | 'fetch', stderr: string): GitError {

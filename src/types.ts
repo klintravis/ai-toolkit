@@ -19,6 +19,7 @@ export const AssetType = {
   Skill: 'skills',
   Prompt: 'prompts',
   Plugin: 'plugins',
+  Command: 'commands',
   Hook: 'hooks',
   Workflow: 'workflows',
   McpServer: 'mcps',
@@ -102,6 +103,8 @@ export interface Toolkit {
   isCloned?: boolean;
   /** True when this toolkit is a pick group folder (under picksDir). */
   isPinGroup?: boolean;
+  /** True when this toolkit is a sideloaded Claude Code plugin (has .claude-plugin/plugin.json). */
+  isPlugin?: boolean;
   /** Populated by UpdateChecker after git fetch; undefined for non-cloned. */
   update?: ToolkitUpdateStatus;
 }

@@ -140,11 +140,11 @@ test('getRemoteUrl and isGitRepo work', { skip: SKIP }, async () => {
 test('redactCredentials scrubs embedded tokens from URLs', () => {
   assert.equal(
     redactCredentials('Cloning into https://token:x-oauth@github.com/org/repo.git ...'),
-    'Cloning into https://***@github.com/org/repo.git ...'
+    'Cloning into https://***:***@github.com/org/repo.git ...'
   );
   assert.equal(
     redactCredentials('fatal: could not read from http://user:pass@host/repo'),
-    'fatal: could not read from http://***@host/repo'
+    'fatal: could not read from http://***:***@host/repo'
   );
   assert.equal(redactCredentials('safe message with no urls'), 'safe message with no urls');
 });

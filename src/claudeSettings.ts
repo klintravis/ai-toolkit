@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { expandHomePath } from './pathUtils';
+import { expandHomePath, pathExists } from './pathUtils';
 import { AssetType, GlobalStateContext, OutputLog, Toolkit } from './types';
 
 const MANAGED_STATE_KEY = 'aiToolkit.claudeManagedEntries';
@@ -34,14 +34,25 @@ export class ClaudeSettingsManager {
   async applyToolkits(toolkits: Toolkit[]): Promise<void> {
     const enabled = toolkits.filter(t => t.enabled);
     const managed = this.getManagedState();
+    const pluginNameCache = new Map<string, string>();
     // Run both sub-operations before persisting state so that a failure in either
     // one does not leave managed state partially updated.
-    const pluginState = await this.applySkillPlugins(enabled, managed);
-    const hookState = await this.applyHooksAndMcps(enabled, managed.managedPluginKeys ?? [], pluginState.managedPluginKeys);
+    const pluginState = await this.applySkillPlugins(enabled, managed, pluginNameCache);
+    const hookState = await this.applyHooksAndMcps(
+      enabled,
+      managed.managedPluginKeys ?? [],
+      pluginState.managedPluginKeys,
+      pluginNameCache,
+    );
     await this.setManagedState({ ...managed, ...pluginState, ...hookState });
   }
 
-  private async applyHooksAndMcps(toolkits: Toolkit[], oldPluginKeys: string[], newPluginKeys: string[]): Promise<Pick<ClaudeManagedState, 'managedHookCommands' | 'managedMcpKeys'>> {
+  private async applyHooksAndMcps(
+    toolkits: Toolkit[],
+    oldPluginKeys: string[],
+    newPluginKeys: string[],
+    pluginNameCache: Map<string, string>,
+  ): Promise<Pick<ClaudeManagedState, 'managedHookCommands' | 'managedMcpKeys'>> {
     const settingsPath = expandHomePath(this.getSettingsPath());
     const current = await this.readSettings(settingsPath);
     if (current === null) {
@@ -54,11 +65,24 @@ export class ClaudeSettingsManager {
     // Remove previously-managed hooks
     if (current.hooks) {
       for (const event of Object.keys(current.hooks)) {
-        current.hooks[event] = (current.hooks[event] ?? []).filter(group => {
-          const cmd = group.hooks?.[0]?.command;
-          return !cmd || !managed.managedHookCommands.includes(cmd);
-        });
-        if (current.hooks[event].length === 0) delete current.hooks[event];
+        const remainingGroups = (current.hooks[event] ?? [])
+          .map(group => {
+            // Managed hooks can share a matcher group with user hooks, so cleanup
+            // must remove only our commands rather than dropping the whole group.
+            const remainingHooks = (group.hooks ?? []).filter(hook =>
+              !hook.command || !managed.managedHookCommands.includes(hook.command)
+            );
+            if (remainingHooks.length === 0) {
+              return undefined;
+            }
+            return { ...group, hooks: remainingHooks };
+          })
+          .filter((group): group is { matcher?: string; hooks: Array<{ type: string; command: string }> } => !!group);
+        if (remainingGroups.length > 0) {
+          current.hooks[event] = remainingGroups;
+        } else {
+          delete current.hooks[event];
+        }
       }
       if (Object.keys(current.hooks).length === 0) delete current.hooks;
     }
@@ -71,6 +95,13 @@ export class ClaudeSettingsManager {
       delete current.mcpServers;
     }
 
+    // Contract for enabledPlugins cleanup:
+    //   - oldPluginKeys comes from managedPluginKeys persisted in globalState
+    //     from the previous apply. Only entries we added in a prior run are
+    //     removed — user-defined entries survive untouched.
+    //   - newPluginKeys is the fresh set produced by this apply run.
+    //   - First-run / cleared-globalState case: oldPluginKeys is empty, so
+    //     nothing user-defined can be accidentally purged.
     // Manage enabledPlugins: remove old managed keys, add new ones.
     // Preserves any user-defined plugin entries.
     const enabledPlugins: Record<string, boolean> =
@@ -89,7 +120,7 @@ export class ClaudeSettingsManager {
     const newMcpKeys: string[] = [];
 
     for (const toolkit of toolkits) {
-      const tkName = this.pluginName(toolkit);
+      const tkName = await this.pluginName(toolkit, pluginNameCache);
 
       for (const asset of toolkit.assets) {
         if (asset.type === AssetType.Hook && (asset.platform === 'claude' || asset.platform === 'both') && !asset.isFolder) {
@@ -144,7 +175,7 @@ export class ClaudeSettingsManager {
     return { managedHookCommands: newHookCommands, managedMcpKeys: newMcpKeys };
   }
 
-  private async applySkillPlugins(toolkits: Toolkit[], managed: ClaudeManagedState): Promise<Pick<ClaudeManagedState, 'managedPluginPaths' | 'managedPluginDirs' | 'managedPluginKeys'>> {
+  private async applySkillPlugins(toolkits: Toolkit[], managed: ClaudeManagedState, pluginNameCache: Map<string, string>): Promise<Pick<ClaudeManagedState, 'managedPluginPaths' | 'managedPluginDirs' | 'managedPluginKeys'>> {
     const pluginsRoot = expandHomePath(this.getPluginsPath());
     const registryDir = expandHomePath(this.getPluginsRegistryPath());
 
@@ -164,6 +195,7 @@ export class ClaudeSettingsManager {
     const newPluginPaths: string[] = [];
     const newPluginDirs: string[] = [];
     const newPluginKeys: string[] = [];
+    const allocatedPluginNames = new Set<string>();
 
     for (const toolkit of toolkits) {
       const skillAssets = toolkit.assets.filter(
@@ -171,7 +203,7 @@ export class ClaudeSettingsManager {
       );
       if (skillAssets.length === 0) continue;
 
-      const tkName = this.pluginName(toolkit);
+      const tkName = await this.allocatePluginName(toolkit, pluginNameCache, allocatedPluginNames, pluginsRoot);
       // Plugin directory is a direct child of pluginsRoot so that installPath
       // is a direct child of installLocation — Claude Code validates this relationship.
       const pluginDir = path.join(pluginsRoot, tkName);
@@ -194,17 +226,11 @@ export class ClaudeSettingsManager {
       for (const skillAsset of skillAssets) {
         const linkPath = path.join(skillsDir, path.basename(skillAsset.sourcePath));
         try {
-          await fs.promises.symlink(
-            skillAsset.sourcePath, linkPath,
-            process.platform === 'win32' ? 'junction' : 'dir'
-          );
-          newPluginPaths.push(linkPath);
-        } catch (err: unknown) {
-          if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
-            this.log.appendLine(`[AI Toolkit / Claude] Could not link skill ${skillAsset.name}: ${err}`);
-          } else {
+          if (await this.linkManagedDirectory(skillAsset.sourcePath, linkPath)) {
             newPluginPaths.push(linkPath);
           }
+        } catch (err: unknown) {
+          this.log.appendLine(`[AI Toolkit / Claude] Could not link skill ${skillAsset.name}: ${err}`);
         }
       }
 
@@ -218,17 +244,11 @@ export class ClaudeSettingsManager {
           await fs.promises.access(sourceDir);
           const linkPath = path.join(pluginDir, nativeDir);
           try {
-            await fs.promises.symlink(
-              sourceDir, linkPath,
-              process.platform === 'win32' ? 'junction' : 'dir'
-            );
-            newPluginPaths.push(linkPath);
-          } catch (err: unknown) {
-            if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
-              this.log.appendLine(`[AI Toolkit / Claude] Could not link ${nativeDir}/ for ${toolkit.name}: ${err}`);
-            } else {
+            if (await this.linkManagedDirectory(sourceDir, linkPath)) {
               newPluginPaths.push(linkPath);
             }
+          } catch (err: unknown) {
+            this.log.appendLine(`[AI Toolkit / Claude] Could not link ${nativeDir}/ for ${toolkit.name}: ${err}`);
           }
         } catch { /* directory doesn't exist, skip */ }
       }
@@ -396,10 +416,61 @@ export class ClaudeSettingsManager {
    * Used to prevent hook commands and MCP args from escaping the toolkit root.
    */
   private isPathWithinRoot(resolvedPath: string, rootPath: string): boolean {
-    const norm = (p: string) => path.resolve(p).replace(/\\/g, '/').toLowerCase();
-    const normPath = norm(resolvedPath);
-    const normRoot = norm(rootPath);
+    const normPath = this.normalizePath(resolvedPath);
+    const normRoot = this.normalizePath(rootPath);
     return normPath === normRoot || normPath.startsWith(normRoot + '/');
+  }
+
+  private normalizePath(inputPath: string): string {
+    return path.resolve(inputPath).replace(/\\/g, '/').toLowerCase();
+  }
+
+  private async allocatePluginName(
+    toolkit: Toolkit,
+    cache: Map<string, string>,
+    allocated: Set<string>,
+    pluginsRoot: string,
+  ): Promise<string> {
+    const baseName = await this.pluginName(toolkit, cache);
+    let candidate = baseName;
+    let suffix = 2;
+    // Manifest names are human-friendly, not globally unique. Disambiguate them
+    // before touching the filesystem so we never adopt an unrelated plugin dir.
+    while (allocated.has(candidate) || await pathExists(path.join(pluginsRoot, candidate))) {
+      candidate = `${baseName}-${suffix++}`;
+    }
+    allocated.add(candidate);
+    return candidate;
+  }
+
+  private async linkManagedDirectory(sourcePath: string, linkPath: string): Promise<boolean> {
+    try {
+      await fs.promises.symlink(
+        sourcePath,
+        linkPath,
+        process.platform === 'win32' ? 'junction' : 'dir'
+      );
+      return true;
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+        throw err;
+      }
+    }
+
+    try {
+      const [actualPath, expectedPath] = await Promise.all([
+        fs.promises.realpath(linkPath),
+        fs.promises.realpath(sourcePath).catch(() => path.resolve(sourcePath)),
+      ]);
+      if (this.normalizePath(actualPath) === this.normalizePath(expectedPath)) {
+        return true;
+      }
+    } catch {
+      // Fall through to the explicit mismatch log below.
+    }
+
+    this.log.appendLine(`[AI Toolkit / Claude] Skipping pre-existing path not managed by AI Toolkit: ${linkPath}`);
+    return false;
   }
 
   /**
@@ -408,21 +479,54 @@ export class ClaudeSettingsManager {
    * two toolkits with the same folder name in different parent directories get
    * distinct plugin names ("work-company-my-toolkit" vs "personal-my-toolkit").
    * Falls back to path.basename when id is not tilde-relative (e.g. in tests).
+   * Results are cached in `cache` to avoid duplicate I/O per applyToolkits call.
    */
-  private pluginName(toolkit: Toolkit): string {
-    // Derive a unique, filesystem-safe name from the toolkit's stable ID.
+  private async pluginName(
+    toolkit: Toolkit,
+    cache: Map<string, string>,
+  ): Promise<string> {
+    const cached = cache.get(toolkit.rootPath);
+    if (cached !== undefined) return cached;
+
+    // If the plugin already declares a name in its own .claude-plugin/plugin.json,
+    // treat it as the preferred base name. applySkillPlugins can still suffix it
+    // if another toolkit or existing directory already occupies that name.
+    const manifest = await this.readJson<{ name?: unknown }>(
+      path.join(toolkit.rootPath, '.claude-plugin', 'plugin.json')
+    );
+    if (manifest && typeof manifest.name === 'string' && manifest.name.trim()) {
+      const sanitized = this.sanitizePluginName(manifest.name);
+      if (sanitized) {
+        cache.set(toolkit.rootPath, sanitized);
+        return sanitized;
+      }
+    }
+
+    // Fall back to a unique, filesystem-safe name derived from the toolkit's stable ID.
     // In production toolkit.id is always tilde-relative (~/work/company/my-toolkit)
     // so stripping ~/ and replacing separators gives "work-company-my-toolkit".
     // For absolute-path IDs (e.g. in tests) we sanitize the full path for uniqueness.
-    const raw = toolkit.id.startsWith('~/')
-      ? toolkit.id.slice(2)           // strip leading ~/
-      : toolkit.id;                   // absolute path — use full path for uniqueness
-    return raw
+    const raw = toolkit.id.startsWith('~/') ? toolkit.id.slice(2) : toolkit.id;
+    const resolved = this.sanitizePluginName(raw) || 'toolkit';
+    cache.set(toolkit.rootPath, resolved);
+    return resolved;
+  }
+
+  /**
+   * Sanitize a plugin name to be filesystem-safe. Defense in depth against
+   * path traversal: collapses `/` and `\` to `-`, strips `:`, replaces
+   * whitespace with `-`, and replaces anything outside `[a-z0-9._-]` with `_`.
+   * Rejects inputs that are empty or consist entirely of dots (e.g. `..`).
+   */
+  private sanitizePluginName(value: string): string {
+    const cleaned = value
       .toLowerCase()
-      .replace(/[\\/]/g, '-')         // path separators → hyphens
-      .replace(/:/g, '')              // strip Windows drive colons (C: → c)
+      .replace(/[\\/]/g, '-')
+      .replace(/:/g, '')
       .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9._-]/g, '_')
-      || 'toolkit';
+      .replace(/[^a-z0-9._-]/g, '_');
+    // Reject empty or dot-only names to avoid `.`, `..`, `...` etc.
+    if (!cleaned || /^\.+$/.test(cleaned)) return '';
+    return cleaned;
   }
 }

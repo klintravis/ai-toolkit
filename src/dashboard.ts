@@ -45,7 +45,6 @@ export class DashboardPanel {
   private constructor(
     private panel: vscode.WebviewPanel,
     private host: DashboardHost,
-    private extensionUri: vscode.Uri,
   ) {
     this.panel.webview.html = this.render();
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
@@ -56,7 +55,7 @@ export class DashboardPanel {
     );
   }
 
-  static show(host: DashboardHost, extensionUri: vscode.Uri): void {
+  static show(host: DashboardHost): void {
     const column = vscode.ViewColumn.Active;
     if (DashboardPanel.current) {
       DashboardPanel.current.panel.reveal(column);
@@ -70,7 +69,7 @@ export class DashboardPanel {
       { enableScripts: true, retainContextWhenHidden: true }
     );
     panel.iconPath = new vscode.ThemeIcon('dashboard') as unknown as vscode.Uri;
-    DashboardPanel.current = new DashboardPanel(panel, host, extensionUri);
+    DashboardPanel.current = new DashboardPanel(panel, host);
   }
 
   async refresh(): Promise<void> {
@@ -100,8 +99,7 @@ export class DashboardPanel {
     const nonce = getNonce();
     const csp = [
       "default-src 'none'",
-      "style-src 'unsafe-inline' https://fonts.googleapis.com",
-      "font-src https://fonts.gstatic.com",
+      "style-src 'unsafe-inline'",
       `script-src 'nonce-${nonce}'`,
       "img-src data:",
     ].join('; ');
@@ -111,9 +109,6 @@ export class DashboardPanel {
 <meta charset="UTF-8" />
 <meta http-equiv="Content-Security-Policy" content="${csp}" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <title>AI Toolkit</title>
 <style>${STYLES}</style>
 </head>
@@ -236,9 +231,9 @@ const ICO_PLUS = SVG('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12"
 const STYLES = `
 /* ── Design tokens ───────────────────────────────────── */
 :root {
-  --font-display: 'Bricolage Grotesque', 'Segoe UI', system-ui, sans-serif;
-  --font-mono: 'IBM Plex Mono', var(--vscode-editor-font-family, monospace);
-  --font-body: var(--vscode-font-family, system-ui, sans-serif);
+  --font-display: var(--vscode-font-family);
+  --font-mono: var(--vscode-editor-font-family);
+  --font-body: var(--vscode-font-family);
   --radius: 8px;
   --radius-lg: 12px;
   --space-xs: 4px;
@@ -625,7 +620,10 @@ function el(tag, attrs, children) {
       var v = attrs[k];
       if (k === 'class') n.className = v;
       else if (k === 'text') n.textContent = v;
-      else if (k === 'html') n.innerHTML = v;
+      // trustedHtml is a deliberate escape hatch for injecting pre-built string
+      // constants (icons, logos). Callers MUST pass compile-time constants only —
+      // never user input. Renamed from html to make the trust contract explicit.
+      else if (k === 'trustedHtml') n.innerHTML = v;
       else if (k === 'style') n.style.cssText = v;
       else if (k.startsWith('data-')) n.setAttribute(k, String(v));
       else n.setAttribute(k, String(v));
@@ -728,7 +726,7 @@ function statPill(num, label, cls) {
 
 function emptyState(icon, title, desc) {
   return el('div', { class: 'empty-state' }, [
-    el('div', { class: 'empty-icon', html: icon }),
+    el('div', { class: 'empty-icon', trustedHtml: icon }),
     el('p', null, [el('strong', { text: title }), document.createTextNode(' — ' + desc)]),
   ]);
 }
@@ -747,7 +745,7 @@ function toolkitCard(t, index) {
   var assets = el('div', { class: 'tk-assets' });
   Object.entries(t.assetCountsByType).forEach(function(entry) {
     var type = entry[0], n = entry[1];
-    assets.append(el('span', { class: 'tk-asset-chip', html: (ASSET_ICONS[type] || '') + ' ' + n }));
+    assets.append(el('span', { class: 'tk-asset-chip', trustedHtml: (ASSET_ICONS[type] || '') + ' ' + n }));
   });
 
   var toggleCls = 'btn btn-sm btn-toggle ' + (t.enabled ? 'is-on' : '');
@@ -788,7 +786,9 @@ function toolkitCard(t, index) {
 
 function groupCard(name, picks, toolkits, index) {
   var groupToolkit = toolkits.find(function(t) {
-    return t.rootPath.replace(/\\\\\\\\/g, '/').endsWith('/' + name) && t.name === name;
+    // Webview state can arrive with Windows separators, so normalize before
+    // matching the synthetic group toolkit by its trailing folder name.
+    return t.rootPath.replace(/\\\\/g, '/').endsWith('/' + name) && t.name === name;
   });
   var enabled = groupToolkit ? groupToolkit.enabled : false;
 
@@ -839,7 +839,7 @@ function groupCard(name, picks, toolkits, index) {
 
 function pinCard(p) {
   return el('div', { class: 'pin-card' }, [
-    el('span', { class: 'pin-icon', html: ASSET_ICONS[p.assetType] || '' }),
+    el('span', { class: 'pin-icon', trustedHtml: ASSET_ICONS[p.assetType] || '' }),
     el('div', { class: 'pin-info' }, [
       el('div', { class: 'pin-name', text: p.assetName }),
       el('div', { class: 'pin-meta' }, [
