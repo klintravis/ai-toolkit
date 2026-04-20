@@ -2,6 +2,24 @@
 
 All notable changes to the AI Toolkit VS Code extension.
 
+## [0.3.1] — 2026-04-19
+
+### Added
+- Lightweight mocked-VS Code smoke coverage for the extension, tree provider, dashboard, and Copilot settings modules in the node:test suite.
+
+### Changed
+- Dual-platform toolkits now flatten top-level platform wrapper folders in the tree so they read more like the plugin section, while still disambiguating duplicate folder names such as Copilot Instructions and Claude Instructions.
+- Toolkit rows in the sidebar now use icon color alone to indicate active or inactive state.
+
+### Fixed
+- `npm run package` now calls the local `vsce` binary directly instead of going through `npx`.
+- Manifest-defined scan mappings are now constrained to the toolkit root, preventing `ai-toolkit.json` from escaping into arbitrary folders.
+- Copilot discovery roots now resolve correctly for flat-layout toolkits, pick groups, and legacy `.github/` assets.
+- Claude settings cleanup now removes only managed hook commands, preserving user hooks that share the same matcher group.
+- Group rename/delete flows and update checks now refresh the tree, dashboard, and status bar consistently.
+- Workspace actions remain available for cloned toolkits even when an update is available.
+- The dev toolchain now uses a supported TypeScript version and a newer `vsce`, removing the previous lint and package-time warning noise.
+
 ## [0.3.0] — 2026-04-15
 
 ### Added

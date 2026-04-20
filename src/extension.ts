@@ -242,8 +242,9 @@ function updateStatusBarAndTree(): void {
   const picks = pinManager.listPinRecords();
   const activeToolkits = allToolkits.filter(t => t.enabled).length;
   const updatesAvailable = allToolkits.filter(t => t.update?.updateAvailable).length;
-  treeProvider.setPinRecords(picks);
-  treeProvider.setSummary({ activeToolkits, updatesAvailable });
+  // Tree badges, status bar counts, and dashboard stats all read from the same
+  // in-memory toolkit state, so they need to refresh together.
+  treeProvider.refresh();
   const parts = [`$(check) ${activeToolkits} active`, `$(pinned) ${picks.length} pinned`];
   if (updatesAvailable > 0) { parts.push(`$(sync) ${updatesAvailable}`); }
   statusBarItem.text = parts.join('  ');
@@ -375,11 +376,10 @@ async function removeEnabledFlag(toolkitId: string): Promise<void> {
   if (toolkitId in enabledMap) {
     delete enabledMap[toolkitId];
     await cfg.update('enabledToolkits', enabledMap, vscode.ConfigurationTarget.Global);
-  } else {
-    // The toolkit had no explicit enabled entry (defaults to false).
-    // Still refresh so the tree reflects the deletion.
-    await refreshToolkits();
   }
+  // enabledToolkits writes do not trigger our toolkitPaths refresh path, so
+  // group delete flows must force a scan even when the config update succeeded.
+  await refreshToolkits();
 }
 
 async function transferEnabledFlag(oldGroupName: string, newGroupName: string): Promise<void> {
@@ -391,9 +391,8 @@ async function transferEnabledFlag(oldGroupName: string, newGroupName: string): 
     enabledMap[newId] = enabledMap[oldId];
     delete enabledMap[oldId];
     await cfg.update('enabledToolkits', enabledMap, vscode.ConfigurationTarget.Global);
-  } else {
-    await refreshToolkits();
   }
+  await refreshToolkits();
 }
 
 async function confirmAndDeleteGroup(groupName: string): Promise<number> {
@@ -554,7 +553,7 @@ async function checkForUpdates(showStatus: boolean): Promise<void> {
     const status = updateStatusCache.get(normalizeForComparison(toolkit.rootPath));
     if (status) { toolkit.update = status; }
   }
-  treeProvider.refresh();
+  updateStatusBarAndTree();
 
   if (showStatus) {
     if (updatableCount > 0) {
@@ -864,8 +863,17 @@ async function buildDashboardState(): Promise<DashboardState> {
 async function handleDashboardMessage(msg: DashboardMessage): Promise<void> {
   switch (msg.type) {
     case 'ready':
-      // git availability probe (cached)
-      gitManager.checkGitAvailable().then(v => { gitAvailable = !!v; });
+      // Dashboard opens before the git probe resolves, so repaint once the
+      // async availability check finishes instead of leaving stale optimistic UI.
+      gitManager.checkGitAvailable()
+        .then(v => {
+          gitAvailable = !!v;
+          return DashboardPanel.current?.refresh();
+        })
+        .catch(() => {
+          gitAvailable = false;
+          return DashboardPanel.current?.refresh();
+        });
       return;
     case 'toggleToolkit': {
       const toolkit = allToolkits.find(t => t.id === msg.toolkitId);

@@ -182,6 +182,50 @@ test('applyToolkits - removes managed hooks when toolkit disabled', async () => 
   } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
 });
 
+test('applyToolkits - preserves user hooks inside mixed groups when removing managed hooks', async () => {
+  const tmpDir = makeTempDir('cs-hook-mixed');
+  const settingsPath = path.join(tmpDir, 'settings.json');
+  const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
+  const managedHook = path.join(tmpDir, 'managed.sh');
+  const userHook = path.join(tmpDir, 'user.sh');
+  try {
+    fs.writeFileSync(settingsPath, JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: 'Bash',
+            hooks: [
+              { type: 'command', command: userHook },
+              { type: 'command', command: managedHook },
+            ],
+          },
+          {
+            hooks: [{ type: 'command', command: managedHook }],
+          },
+        ],
+      },
+    }));
+
+    const ctx = makeContext({
+      'aiToolkit.claudeManagedEntries': {
+        managedMcpKeys: [],
+        managedHookCommands: [managedHook],
+        managedPluginPaths: [],
+        managedPluginDirs: [],
+        managedPluginKeys: [],
+      },
+    });
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
+
+    await mgr.applyToolkits([]);
+
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    assert.equal(settings.hooks.PreToolUse.length, 1, 'only the mixed user group should remain');
+    assert.deepEqual(settings.hooks.PreToolUse[0].hooks, [{ type: 'command', command: userHook }]);
+  } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
+});
+
 // --- Skill symlinks ---
 
 test('applyToolkits - symlinks skill folder into claude plugins dir', async () => {
@@ -363,6 +407,64 @@ test('applyToolkits - two toolkits with same folder name in different parents ge
     const pluginDirs = fs.readdirSync(pluginsPath).filter(d => !d.startsWith('.'));
     assert.equal(pluginDirs.length, 2, 'each toolkit must get its own plugin directory');
   } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('applyToolkits - duplicate declared plugin names are disambiguated instead of colliding', async () => {
+  const base = path.join(os.tmpdir(), `cs-manifest-collision-${Date.now()}`);
+  const dirA = path.join(base, 'one');
+  const dirB = path.join(base, 'two');
+  const settingsPath = path.join(base, 'settings.json');
+  const pluginsPath = path.join(base, 'plugins');
+  const registryPath = path.join(base, 'registry');
+  try {
+    for (const dir of [dirA, dirB]) {
+      fs.mkdirSync(path.join(dir, '.claude-plugin'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'shared-plugin' }));
+      fs.mkdirSync(path.join(dir, 'skills', 'main-skill'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'skills', 'main-skill', 'SKILL.md'), '# skill');
+    }
+
+    const ctx = makeContext();
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
+    await mgr.applyToolkits([
+      { id: '~/one', name: 'one', rootPath: dirA, assets: [makeAsset(AssetType.Skill, 'claude', 'main-skill', path.join(dirA, 'skills', 'main-skill'), true)], enabled: true, format: 'sideloaded' },
+      { id: '~/two', name: 'two', rootPath: dirB, assets: [makeAsset(AssetType.Skill, 'claude', 'main-skill', path.join(dirB, 'skills', 'main-skill'), true)], enabled: true, format: 'sideloaded' },
+    ]);
+
+    const pluginDirs = fs.readdirSync(pluginsPath).filter(d => !d.startsWith('.')).sort();
+    assert.deepEqual(pluginDirs, ['shared-plugin', 'shared-plugin-2']);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
+test('applyToolkits - pre-existing plugin dir with the preferred name is left alone and a unique dir is used', async () => {
+  const tmpDir = makeTempDir('cs-plugin-existing');
+  const settingsPath = path.join(tmpDir, 'settings.json');
+  const pluginsPath = path.join(tmpDir, 'plugins');
+  const registryPath = path.join(tmpDir, 'registry');
+  const src = path.join(tmpDir, 'src-plugin');
+  try {
+    fs.mkdirSync(path.join(pluginsPath, 'preferred-plugin'), { recursive: true });
+    fs.writeFileSync(path.join(pluginsPath, 'preferred-plugin', 'marker.txt'), 'user-owned');
+    fs.mkdirSync(path.join(src, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(path.join(src, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'preferred-plugin' }));
+    const skillDir = path.join(src, 'skills', 'main-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# skill');
+
+    const ctx = makeContext();
+    const mgr = new ClaudeSettingsManager(ctx, makeLog(), () => settingsPath, () => pluginsPath, () => registryPath);
+    await mgr.applyToolkits([{
+      id: '~/src-plugin',
+      name: 'src-plugin',
+      rootPath: src,
+      assets: [makeAsset(AssetType.Skill, 'claude', 'main-skill', skillDir, true)],
+      enabled: true,
+      format: 'sideloaded',
+    }]);
+
+    assert.equal(fs.readFileSync(path.join(pluginsPath, 'preferred-plugin', 'marker.txt'), 'utf-8'), 'user-owned');
+    assert.ok(fs.existsSync(path.join(pluginsPath, 'preferred-plugin-2', 'skills', 'main-skill')));
+  } finally { fs.rmSync(tmpDir, { recursive: true, force: true }); }
 });
 
 // --- Idempotency ---

@@ -2,7 +2,7 @@
   "name": "ai-toolkit",
   "displayName": "AI Toolkit",
   "description": "Manage AI toolkits from external folders — browse, enable, and configure Copilot and Claude Code assets (agents, instructions, skills, prompts, hooks, MCP servers) across workspaces.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "klintravis",
   "license": "MIT",
   "repository": {
@@ -219,11 +219,11 @@
         },
         {
           "command": "aiToolkit.addToWorkspace",
-          "when": "view == aiToolkit.toolkits && viewItem =~ /^toolkit-(enabled|disabled)-(cloned|external)$/"
+          "when": "view == aiToolkit.toolkits && viewItem =~ /^toolkit-(enabled|disabled)-(cloned|external)(-updatable)?$/"
         },
         {
           "command": "aiToolkit.removeFromWorkspace",
-          "when": "view == aiToolkit.toolkits && viewItem =~ /^toolkit-(enabled|disabled)-(cloned|external)$/"
+          "when": "view == aiToolkit.toolkits && viewItem =~ /^toolkit-(enabled|disabled)-(cloned|external)(-updatable)?$/"
         },
         {
           "command": "aiToolkit.updateToolkit",
@@ -497,16 +497,16 @@
     "test": "npm run compile && node --test test/pathUtils.test.js test/scanner.test.js test/clonedToolkitsStore.test.js test/git.test.js test/updateChecker.test.js test/picks.test.js test/claudeSettings.test.js test/redact.test.js test/extension.test.js test/copilotSettings.test.js test/treeProvider.test.js test/dashboard.test.js",
     "lint": "eslint src --ext ts && eslint test --ext js",
     "check": "npm run lint && npm test",
-    "package": "npx vsce package"
+    "package": "vsce package"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.96.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
-    "@vscode/vsce": "^2.22.0",
+    "@vscode/vsce": "^3.9.1",
     "eslint": "^8.56.0",
     "rimraf": "^6.1.3",
-    "typescript": "^5.3.0"
+    "typescript": "^5.5.4"
   }
 }

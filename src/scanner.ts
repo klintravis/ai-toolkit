@@ -244,10 +244,11 @@ export class ToolkitScanner {
     const seenIds = new Set<string>();
 
     for (const mapping of effectiveMappings) {
-      const folderPath = path.join(rootPath, ...mapping.folder.split('/'));
-      if (!(await pathExists(folderPath))) continue;
+      const resolvedMapping = this.resolveMappingFolder(rootPath, mapping);
+      if (!resolvedMapping) continue;
+      if (!(await pathExists(resolvedMapping.folderPath))) continue;
       const discovered = await this.scanMappingFolder(
-        folderPath, mapping, id, mapping.folder, MAX_SCAN_DEPTH, toolkitRealRoot, visitedLinks,
+        resolvedMapping.folderPath, mapping, id, resolvedMapping.relativeBase, MAX_SCAN_DEPTH, toolkitRealRoot, visitedLinks,
       );
       for (const asset of discovered) {
         if (!seenIds.has(asset.id)) { seenIds.add(asset.id); assets.push(asset); }
@@ -257,6 +258,19 @@ export class ToolkitScanner {
     if (assets.length === 0) return null;
 
     return { id, name: displayName, rootPath, format: SourceFormat.DualPlatform, assets, enabled: enabledToolkits[id] ?? false };
+  }
+
+  private resolveMappingFolder(rootPath: string, mapping: AssetMapping): { folderPath: string; relativeBase: string } | null {
+    const folderPath = path.resolve(rootPath, mapping.folder);
+    const relativeBase = path.relative(rootPath, folderPath).replace(/\\/g, '/');
+    // Toolkit manifests are untrusted input. Resolve first, then re-check that
+    // the folder still sits under the toolkit root so ../ and mixed separators
+    // cannot escape the scan boundary.
+    if (!relativeBase || relativeBase.startsWith('..') || path.isAbsolute(relativeBase)) {
+      console.warn(`[AI Toolkit] Skipping mapping outside toolkit root: ${mapping.folder}`);
+      return null;
+    }
+    return { folderPath, relativeBase };
   }
 
   private async scanMappingFolder(

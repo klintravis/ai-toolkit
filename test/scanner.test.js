@@ -209,6 +209,33 @@ test('scanPath - ai-toolkit.json custom mapping is additive', async () => {
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('scanPath - ai-toolkit.json mappings that escape the toolkit root are ignored', async () => {
+  const scanner = new ToolkitScanner();
+  const baseDir = makeTempDir('manifest-escape');
+  const toolkitDir = path.join(baseDir, 'toolkit');
+  const outsideDir = path.join(baseDir, 'outside', 'custom');
+  try {
+    fs.mkdirSync(path.join(toolkitDir, 'copilot', 'agents'), { recursive: true });
+    fs.mkdirSync(outsideDir, { recursive: true });
+    fs.writeFileSync(path.join(toolkitDir, 'copilot', 'agents', 'safe.agent.md'), '# safe');
+    fs.writeFileSync(path.join(outsideDir, 'secret.json'), '{}');
+    fs.writeFileSync(path.join(toolkitDir, 'ai-toolkit.json'), JSON.stringify({
+      mappings: [{
+        folder: process.platform === 'win32' ? '..\\outside\\custom' : '../outside/custom',
+        assetType: 'standards',
+        platform: 'shared',
+        isFolder: false,
+        extensions: ['.json'],
+      }],
+    }));
+
+    const result = await scanner.scanPath(toolkitDir, {});
+    assert.equal(result.length, 1);
+    assert.equal(result[0].assets.length, 1, 'escaped mapping must not add external assets');
+    assert.equal(result[0].assets[0].name, 'Safe');
+  } finally { fs.rmSync(baseDir, { recursive: true, force: true }); }
+});
+
 test('scanPath - ai-toolkit.json name overrides directory name', async () => {
   const scanner = new ToolkitScanner();
   const dir = makeTempDir('manifest-name');

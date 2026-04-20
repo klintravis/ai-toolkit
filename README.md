@@ -64,7 +64,7 @@ Click the checkmark next to the toolkit name. Copilot and Claude settings update
 
 ### 3 — Browse assets
 
-Expand the toolkit to see agents, instructions, skills, hooks, MCP servers, and more. Click any asset to open it in the editor.
+Expand the toolkit to browse direct asset folders first, then the assets inside them. Dual-platform toolkits now flatten the top-level platform wrappers so they read more like the plugin tree, only adding prefixes where needed to distinguish folders such as **Copilot Hooks** and **Claude Hooks**.
 
 ### 4 — Pin your favourites
 

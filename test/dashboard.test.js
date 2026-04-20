@@ -1,19 +1,17 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { requireFresh, withMockedVscode } = require('./helpers/mockVscode');
 
-// TODO: dashboard.js imports 'vscode' at the module level, which is only
-// available inside the VS Code Extension Development Host. The module-load test
-// is deferred until a lightweight vscode stub is introduced.
-// See: Theme 4 follow-up.
-//
 // Additional tests (serializeState round-trip, message-handler dispatch) require
 // refactoring dashboard.ts to export pure functions. Deferred unless changes fit
 // within the 20-line production cap in a follow-up task.
 
-test.skip('dashboard module - loads without errors', () => {
-  // Blocked: require('../out/dashboard.js') throws "Cannot find module 'vscode'"
-  const mod = require('../out/dashboard.js');
-  assert.ok(mod, 'dashboard module exports something');
+test('dashboard module - loads without errors', () => {
+  withMockedVscode(() => {
+    const mod = requireFresh('./out/dashboard.js');
+    assert.ok(mod.DashboardPanel, 'dashboard module exports DashboardPanel');
+    assert.ok(typeof mod.DashboardPanel.show === 'function');
+  });
 });
 
 // Pure-logic test: DashboardMessage type discriminants are stable string

@@ -786,7 +786,9 @@ function toolkitCard(t, index) {
 
 function groupCard(name, picks, toolkits, index) {
   var groupToolkit = toolkits.find(function(t) {
-    return t.rootPath.replace(/\\\\\\\\/g, '/').endsWith('/' + name) && t.name === name;
+    // Webview state can arrive with Windows separators, so normalize before
+    // matching the synthetic group toolkit by its trailing folder name.
+    return t.rootPath.replace(/\\\\/g, '/').endsWith('/' + name) && t.name === name;
   });
   var enabled = groupToolkit ? groupToolkit.enabled : false;
 

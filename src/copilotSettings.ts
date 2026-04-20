@@ -14,6 +14,8 @@ const DISCOVERY_LOCATION_SETTINGS: Array<{ assetType: AssetType; key: string; la
   { assetType: AssetType.Hook, key: 'hookFilesLocations', label: 'hook file locations' },
 ];
 
+const PLATFORM_DISCOVERY_ROOTS = new Set(['copilot', 'claude', 'shared', '.github']);
+
 /**
  * Manages GitHub Copilot VS Code settings to point at external toolkit assets.
  * Assets live in external folders and are referenced via absolute paths —
@@ -145,9 +147,9 @@ export class CopilotSettingsManager {
       for (const toolkit of enabledToolkits) {
         const locations = this.getDiscoveryFolders(toolkit, assetType);
         for (const location of locations) {
-          const tilePath = toHomeRelativePath(location);
-          if (tilePath) {
-            cleaned[tilePath] = true;
+          const tildePath = toHomeRelativePath(location);
+          if (tildePath) {
+            cleaned[tildePath] = true;
           } else {
             unsupportedToolkitNames.add(toolkit.name);
             this.log(`Skipped unsupported ${label} path outside the user home: ${location}`);
@@ -213,14 +215,16 @@ export class CopilotSettingsManager {
     for (const asset of toolkit.assets) {
       if (asset.type !== assetType) continue;
       if (asset.platform !== 'copilot' && asset.platform !== 'both') continue;
-      // Derive discovery folder: <root>/<top-two-path-segments>
-      // e.g. claude/skills/my-skill → <root>/claude/skills
-      //      copilot/agents/foo.agent.md → <root>/copilot/agents
-      const relPath = path.relative(toolkit.rootPath, asset.sourcePath).replace(/\\/g, '/');
-      const parts = relPath.split('/');
-      if (parts.length >= 2) {
-        folders.add(path.join(toolkit.rootPath, parts[0], parts[1]));
-      }
+      const relativeDir = path.posix.dirname(asset.relativePath.replace(/\\/g, '/'));
+      if (relativeDir === '.' || relativeDir === '') continue;
+      const parts = relativeDir.split('/').filter(Boolean);
+      if (parts.length === 0) continue;
+      // Discovery roots depend on layout: flat toolkits contribute <root>/<type>,
+      // while dual-platform and legacy .github layouts contribute <root>/<platform>/<type>.
+      const discoveryRoot = parts.length >= 2 && PLATFORM_DISCOVERY_ROOTS.has(parts[0])
+        ? parts.slice(0, 2)
+        : parts.slice(0, 1);
+      folders.add(path.join(toolkit.rootPath, ...discoveryRoot));
     }
     return [...folders];
   }
